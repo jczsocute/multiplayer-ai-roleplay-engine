@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Environment
+.env
+
+# Database
+*.db
+*.sqlite
+database/*.db
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# Runtime
+*.pid
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Temporary
+*.tmp
+*.swp

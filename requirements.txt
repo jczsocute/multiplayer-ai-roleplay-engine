@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+websockets
+aiosqlite
+python-dotenv
+openai
+pydantic
