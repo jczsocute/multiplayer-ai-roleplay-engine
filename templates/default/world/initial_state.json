@@ -1,0 +1,22 @@
+{
+  "time": "00:10",
+  "phase": "风暴封岛",
+  "weather": "暴雨，强风持续增强",
+  "deadline": "05:20 日出前恢复灯塔",
+  "medical_ship": {
+    "status": "正在接近回声礁",
+    "estimated_arrival": "约五小时后"
+  },
+  "lighthouse": {
+    "main_light": "熄灭",
+    "main_generator": "停转，原因未确认",
+    "backup_light": "尚未启动"
+  },
+  "characters": {
+    "A": {"location": "值班室", "condition": "安全"},
+    "B": {"location": "值班室", "condition": "衣物湿透，轻微疲劳"}
+  },
+  "known_items": ["值班室无线电", "航海图"],
+  "global_events": ["岛屿交通中断", "医疗船发出断续求救信号"],
+  "shared_progress": {"灯塔恢复": "0%"}
+}

@@ -1,7 +1,3 @@
-fastapi
-uvicorn
-websockets
-aiosqlite
+-r requirements-client.txt
 python-dotenv
 openai
-pydantic

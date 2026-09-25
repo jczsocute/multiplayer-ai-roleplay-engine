@@ -1,0 +1,12 @@
+{
+  "world_state": {},
+  "public_information": {},
+  "player_views": {
+    "A": {},
+    "B": {}
+  },
+  "player_statusbar": {
+    "A": {},
+    "B": {}
+  }
+}

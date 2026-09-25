@@ -11,9 +11,14 @@ __pycache__/
 *.sqlite
 database/*.db
 
+# Runtime game instances
+games/*
+!games/.gitkeep
+
 # Logs
 logs/*
 !logs/.gitkeep
+*.log
 
 # Runtime
 *.pid
@@ -28,3 +33,7 @@ logs/*
 # Temporary
 *.tmp
 *.swp
+*.bak
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,67 @@
+Screen {
+    layout: vertical;
+}
+
+#identity {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#history {
+    height: 1fr;
+    border: solid $primary;
+    padding: 0 1;
+    scrollbar-gutter: stable;
+}
+
+#lobby {
+    display: none;
+    height: auto;
+    max-height: 8;
+    border: round $secondary;
+    padding: 0 1;
+}
+
+#lobby-info {
+    height: auto;
+}
+
+#assignment-controls {
+    display: none;
+    height: 3;
+}
+
+#role-select {
+    width: 1fr;
+}
+
+#assign-role {
+    width: 14;
+}
+
+#collaboration {
+    height: 3;
+    content-align: center middle;
+    border-top: solid $primary;
+    border-bottom: solid $primary;
+}
+
+#draft-editor {
+    height: 8;
+    border: tall $accent;
+}
+
+#draft-editor.-read-only {
+    border: tall #808080;
+}
+
+#shortcut-help {
+    height: 1;
+    content-align: center middle;
+    color: $text-muted;
+}
+
+#command-input {
+    height: 3;
+}
