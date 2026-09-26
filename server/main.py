@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import ipaddress
 import json
 import logging
 from pathlib import Path
@@ -50,8 +51,11 @@ class GameServer:
         try:
             registration = await asyncio.wait_for(websocket.recv(), timeout=15)
             message = self._decode(registration)
+            if message.get("type") == "join_host":
+                await self._serve_host(websocket)
+                return
             if message.get("type") != "join":
-                await self._send_error(websocket, "first message must be join")
+                await self._send_error(websocket, "first message must be join or join_host")
                 await websocket.close(code=1008)
                 return
 
@@ -63,20 +67,17 @@ class GameServer:
             participant, is_new = joined
             participant_name = participant.name
             if is_new:
-                await self.database.register_participant(
-                    participant.name, participant.is_host
-                )
+                await self.database.register_participant(participant.name)
 
             logger.info("Participant %s connected", participant_name)
             await websocket.send(json.dumps({
                 "type": "joined",
                 "name": participant.name,
-                "is_host": participant.is_host,
                 "role": participant.role,
                 "scenario": self.scenario_name,
             }, ensure_ascii=False))
-            await self.sessions.broadcast(await self.sessions.lobby_snapshot())
-            await self.sessions.broadcast(await self._round_snapshot())
+            await self._broadcast_lobby()
+            await self._broadcast_state()
             if participant.role:
                 await self._send_history(participant.role, websocket)
                 replayed = await self._replay_narrations(participant.role, websocket)
@@ -107,8 +108,8 @@ class GameServer:
                 participant = self.sessions.participants[participant_name]
                 await self.sessions.remove(participant_name, websocket)
                 logger.info("Participant %s disconnected", participant_name)
-                await self.sessions.broadcast(await self.sessions.lobby_snapshot())
-                await self.sessions.broadcast(await self._round_snapshot())
+                await self._broadcast_lobby()
+                await self._broadcast_state()
                 if participant.role:
                     await self.sessions.broadcast({
                         "type": "system",
@@ -116,6 +117,61 @@ class GameServer:
                         "name": participant.name,
                         "text": f"{participant.name} 已离开。",
                     })
+
+    async def _serve_host(self, websocket: ServerConnection) -> None:
+        if not self._is_local_host(websocket):
+            await self._send_error(websocket, "host connections are limited to localhost")
+            await websocket.close(code=1008)
+            return
+        if not await self.sessions.join_host(websocket):
+            await self._send_error(websocket, "a host is already connected")
+            await websocket.close(code=1008)
+            return
+        try:
+            await websocket.send(json.dumps({
+                "type": "host_joined",
+                "scenario": self.scenario_name,
+            }, ensure_ascii=False))
+            await websocket.send(json.dumps(
+                await self.sessions.lobby_snapshot(), ensure_ascii=False
+            ))
+            await websocket.send(json.dumps(
+                await self._round_snapshot(), ensure_ascii=False
+            ))
+            latest = await self.database.get_latest_world_update()
+            if latest is not None:
+                await websocket.send(json.dumps({
+                    "type": "world_update",
+                    **latest,
+                }, ensure_ascii=False))
+            async for raw_message in websocket:
+                await self._handle_host_command(websocket, raw_message)
+        finally:
+            await self.sessions.remove_host(websocket)
+
+    async def _handle_host_command(
+        self, websocket: ServerConnection, raw_message: str
+    ) -> None:
+        try:
+            message = self._decode(raw_message)
+            if message.get("type") != "assign_roles":
+                raise ValueError("unknown host command")
+            async with self.command_lock:
+                assignments = await self.sessions.assign_roles(
+                    str(message.get("player_a", "")),
+                    str(message.get("player_b", "")),
+                )
+                await self.database.save_role_assignment(assignments)
+                self.rounds.activate_lobby()
+                for role, player in self.rounds.players.items():
+                    await self.database.save_player(role, player.status, player.action)
+                await self._broadcast_lobby()
+                role_message = {"type": "role_assigned", "assignments": assignments}
+                await self.sessions.broadcast(role_message)
+                await self.sessions.send_host(role_message)
+                await self._broadcast_state()
+        except (RoundError, ValueError, json.JSONDecodeError) as exc:
+            await self._send_error(websocket, str(exc))
 
     async def _handle_command(
         self, participant_name: str, websocket: ServerConnection, raw_message: str
@@ -125,21 +181,6 @@ class GameServer:
             command = message.get("type")
             completed = None
             async with self.command_lock:
-                if command == "assign_roles":
-                    assignments = await self.sessions.assign_roles(
-                        participant_name, str(message.get("host_role", ""))
-                    )
-                    await self.database.save_role_assignment(assignments)
-                    self.rounds.activate_lobby()
-                    for role, player in self.rounds.players.items():
-                        await self.database.save_player(role, player.status, player.action)
-                    await self.sessions.broadcast(await self.sessions.lobby_snapshot())
-                    await self.sessions.broadcast({
-                        "type": "role_assigned", "assignments": assignments
-                    })
-                    await self.sessions.broadcast(await self._round_snapshot())
-                    return
-
                 player_id = await self.sessions.role_for(participant_name)
                 if player_id is None:
                     raise RoundError("wait for the host to assign Player A and Player B")
@@ -183,7 +224,7 @@ class GameServer:
                 player = self.rounds.players[player_id]
                 await self.database.save_player(player_id, player.status, player.action)
                 if command != "action":
-                    await self.sessions.broadcast(await self._round_snapshot())
+                    await self._broadcast_state()
 
                 if completed is not None:
                     for current_id in ("A", "B"):
@@ -203,17 +244,23 @@ class GameServer:
                 action_b=completed.actions["B"],
             )
             await self.database.save_world_update(completed, world_result)
-            self.rounds.set_stage(RoundStage.WORLD_DONE)
+            await self.sessions.send_host({
+                "type": "world_update",
+                "round": completed.round_number,
+                "result": world_result,
+            })
+            await self._set_stage(RoundStage.WORLD_DONE)
         except Exception:
             logger.exception("World update failed for round %s", completed.round_number)
             self.rounds.abort_processing()
             await self._set_stage(RoundStage.WAITING_INPUT)
             for player_id, player in self.rounds.players.items():
                 await self.database.save_player(player_id, player.status, player.action)
-            await self.sessions.broadcast(
-                {"type": "error", "detail": "world update failed; actions can be edited and resubmitted"}
-            )
-            await self.sessions.broadcast(await self._round_snapshot())
+            await self._broadcast_message({
+                "type": "error",
+                "detail": "world update failed; actions can be edited and resubmitted",
+            })
+            await self._broadcast_state()
             return
 
         await self._continue_views(completed)
@@ -236,9 +283,10 @@ class GameServer:
                 await self.database.save_player_views(completed.round_number, views)
             if len(views) != len(missing):
                 logger.error("Player view recovery failed for round %s", completed.round_number)
-                await self.sessions.broadcast(
-                    {"type": "error", "detail": "player view generation failed; use /retry"}
-                )
+                await self._broadcast_message({
+                    "type": "error",
+                    "detail": "player view generation failed; use /retry",
+                })
                 return
         await self._set_stage(RoundStage.VIEW_DONE)
         await self._continue_narrations(completed)
@@ -250,6 +298,9 @@ class GameServer:
         histories = await asyncio.gather(
             *(self.database.get_chat_history(player_id) for player_id in missing)
         )
+        displays = await asyncio.gather(
+            *(self.database.get_player_display(player_id) for player_id in missing)
+        )
         for player_id, history in zip(missing, histories, strict=True):
             history.append({"role": "player", "content": completed.actions[player_id]})
 
@@ -259,9 +310,12 @@ class GameServer:
                     player_id,
                     data["public_world_info"],
                     data["player_views"][player_id],
+                    display["statusbar"],
                     history,
                 )
-                for player_id, history in zip(missing, histories, strict=True)
+                for player_id, history, display in zip(
+                    missing, histories, displays, strict=True
+                )
             ),
             return_exceptions=True,
         )
@@ -278,9 +332,10 @@ class GameServer:
                 completed.round_number,
                 [result for result in results if not isinstance(result, dict)],
             )
-            await self.sessions.broadcast(
-                {"type": "error", "detail": "narration generation failed; use /retry"}
-            )
+            await self._broadcast_message({
+                "type": "error",
+                "detail": "narration generation failed; use /retry",
+            })
             return
 
         data = await self.database.get_recovery_data(completed.round_number)
@@ -300,9 +355,12 @@ class GameServer:
         await self.sessions.broadcast(
             {"type": "round_complete", "round": completed.round_number}
         )
+        await self.sessions.send_host(
+            {"type": "round_complete", "round": completed.round_number}
+        )
         self.rounds.start_next_round()
         await self.database.create_round(self.rounds.round_number)
-        await self.sessions.broadcast(await self._round_snapshot())
+        await self._broadcast_state()
 
     async def recover_round(self) -> None:
         data = await self.database.get_recovery_data(self.rounds.round_number)
@@ -328,6 +386,13 @@ class GameServer:
     async def _set_stage(self, stage: RoundStage) -> None:
         self.rounds.set_stage(stage)
         await self.database.set_round_stage(self.rounds.round_number, stage)
+        message = {
+            "type": "processing_stage",
+            "round": self.rounds.round_number,
+            "stage": stage.value,
+        }
+        await self.sessions.broadcast(message)
+        await self.sessions.send_host(message)
 
     async def _replay_narrations(
         self, player_id: str, websocket: ServerConnection
@@ -358,6 +423,7 @@ class GameServer:
             "scenario": self.scenario_name,
             "role": player_id,
             "round": self.rounds.round_number,
+            "stage": snapshot["stage"],
             "players": snapshot["players"],
             "draft": self.rounds.players[player_id].action,
             **display,
@@ -369,6 +435,31 @@ class GameServer:
         for player_id, player in snapshot["players"].items():
             player["connected"] = connected.get(player_id, False)
         return snapshot
+
+    async def _broadcast_lobby(self) -> None:
+        message = await self.sessions.lobby_snapshot()
+        await self.sessions.broadcast(message)
+        await self.sessions.send_host(message)
+
+    async def _broadcast_state(self) -> None:
+        message = await self._round_snapshot()
+        await self.sessions.broadcast(message)
+        await self.sessions.send_host(message)
+
+    async def _broadcast_message(self, message: dict) -> None:
+        await self.sessions.broadcast(message)
+        await self.sessions.send_host(message)
+
+    @staticmethod
+    def _is_local_host(websocket: ServerConnection) -> bool:
+        remote = getattr(websocket, "remote_address", None)
+        if remote is None:
+            return True
+        address = remote[0] if isinstance(remote, tuple) else str(remote)
+        try:
+            return ipaddress.ip_address(address).is_loopback
+        except ValueError:
+            return address == "localhost"
 
     @staticmethod
     def _decode(raw_message: str) -> dict:

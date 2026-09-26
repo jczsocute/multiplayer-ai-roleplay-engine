@@ -17,7 +17,7 @@ class TestGameApp(GameApp):
 
 
 class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_enter_submit_cancel_and_read_only_lifecycle(self) -> None:
+    async def test_draft_and_command_are_independent(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 32)) as pilot:
             app.role = "A"
@@ -32,10 +32,15 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any(item["type"] == "submit" for item in app.sent))
 
             app.sent.clear()
-            await pilot.press("ctrl+enter")
+            command = app.query_one("#command-input", Input)
+            command.disabled = False
+            command.value = "/submit"
+            command.focus()
+            await pilot.press("enter")
             await pilot.pause()
             self.assertEqual([item["type"] for item in app.sent], ["action", "submit"])
             self.assertEqual(app.sent[0]["text"], editor.text)
+            self.assertEqual(command.value, "")
 
             draft = editor.text
             app._apply_round_state({
@@ -49,7 +54,9 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(editor.text, draft)
 
             app.sent.clear()
-            await pilot.press("ctrl+e")
+            command.value = "/cancel"
+            command.focus()
+            await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app.sent, [{"type": "cancel_submit"}])
             app._apply_round_state({
@@ -62,21 +69,11 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(editor.read_only)
             self.assertEqual(editor.text, draft)
 
-            app._apply_round_state({
-                "round": 1,
-                "players": {
-                    "A": {"status": "READY", "connected": True},
-                    "B": {"status": "EDITING", "connected": True},
-                },
-            })
-            command = app.query_one("#command-input", Input)
-            command.disabled = False
-            command.value = "/cancel"
-            command.focus()
-            app.sent.clear()
-            await pilot.press("enter")
-            await pilot.pause()
-            self.assertEqual(app.sent, [{"type": "cancel_submit"}])
+            self.assertEqual(editor.text, draft)
+            self.assertFalse(any(
+                binding.key in ("ctrl+enter", "ctrl+e")
+                for binding in app.BINDINGS
+            ))
 
     async def test_next_round_clears_draft(self) -> None:
         app = TestGameApp()

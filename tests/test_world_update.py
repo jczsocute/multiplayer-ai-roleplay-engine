@@ -31,9 +31,16 @@ class MockNarrator:
         self.calls = []
 
     async def narrate(
-        self, player_id: str, public_world_info: str, player_view: str, chat_history: list
+        self,
+        player_id: str,
+        public_world_info: str,
+        player_view: str,
+        player_statusbar: dict,
+        chat_history: list,
     ) -> dict:
-        self.calls.append((player_id, public_world_info, player_view, chat_history))
+        self.calls.append(
+            (player_id, public_world_info, player_view, player_statusbar, chat_history)
+        )
         return {"text": f"Narration for {player_id}.", "status": {}}
 
 
@@ -52,9 +59,16 @@ class FlakyNarrator(MockNarrator):
         self.failed_once = False
 
     async def narrate(
-        self, player_id: str, public_world_info: str, player_view: str, chat_history: list
+        self,
+        player_id: str,
+        public_world_info: str,
+        player_view: str,
+        player_statusbar: dict,
+        chat_history: list,
     ) -> dict:
-        self.calls.append((player_id, public_world_info, player_view, chat_history))
+        self.calls.append(
+            (player_id, public_world_info, player_view, player_statusbar, chat_history)
+        )
         if player_id == "B" and not self.failed_once:
             self.failed_once = True
             raise RuntimeError("temporary narration failure")
@@ -116,14 +130,19 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
         narrator = Narrator(llm)
 
         result = await narrator.narrate(
-            "A", "It is noon.", "The gate is visible.", [{"role": "player", "content": "look"}]
+            "A",
+            "It is noon.",
+            "The gate is visible.",
+            {"左腿": "严重受伤"},
+            [{"role": "player", "content": "look"}],
         )
 
         self.assertEqual(result["text"], "You see the open gate.")
         self.assertEqual(result["status"], {})
         self.assertIn("It is noon.", llm.user_prompt)
         self.assertIn("The gate is visible.", llm.user_prompt)
-        self.assertNotIn("Objective World State", llm.user_prompt)
+        self.assertIn("严重受伤", llm.user_prompt)
+        self.assertNotIn("world_state", llm.user_prompt)
 
     async def test_player_view_generator_builds_player_specific_prompt(self) -> None:
         llm = MockLLM()
@@ -153,6 +172,7 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.max_tokens, 8192)
         self.assertIn("严格输出合法 JSON", llm.system_prompt)
         self.assertIn('"player_statusbar"', llm.user_prompt)
+        self.assertIn("world_updater_output.json", llm.system_prompt)
         for expected in ("世界设定", "玩家 A", "玩家 B", "old state", "action A", "action B"):
             self.assertIn(expected, llm.user_prompt)
 
@@ -168,8 +188,10 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
             websocket = FakeWebSocket()
             player_a_socket = FakeWebSocket()
             player_b_socket = FakeWebSocket()
+            host_socket = FakeWebSocket()
             await server.sessions.add("A", player_a_socket)
             await server.sessions.add("B", player_b_socket)
+            await server.sessions.join_host(host_socket)
 
             await server._handle_command(
                 "A", websocket, json.dumps({"type": "action", "text": "open the gate"})
@@ -190,6 +212,10 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertEqual(
+                {call[0]: call[3] for call in narrator.calls},
+                {"A": {"hp": 100}, "B": {"hp": 100}},
+            )
+            self.assertEqual(
                 [m["text"] for m in player_a_socket.messages if m["type"] == "narration"],
                 ["Narration for A."],
             )
@@ -197,6 +223,27 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 [m["text"] for m in player_b_socket.messages if m["type"] == "narration"],
                 ["Narration for B."],
             )
+            host_updates = [
+                message for message in host_socket.messages
+                if message["type"] == "world_update"
+            ]
+            self.assertEqual(len(host_updates), 1)
+            self.assertEqual(host_updates[0]["result"]["world_state"], {"gate": "open"})
+            self.assertFalse(any(
+                message["type"] == "world_update"
+                for message in player_a_socket.messages + player_b_socket.messages
+            ))
+            player_stages = [
+                message["stage"] for message in player_a_socket.messages
+                if message["type"] == "processing_stage"
+            ]
+            host_stages = [
+                message["stage"] for message in host_socket.messages
+                if message["type"] == "processing_stage"
+            ]
+            for stage in ("WORLD_UPDATING", "NARRATION_GENERATING"):
+                self.assertIn(stage, player_stages)
+                self.assertIn(stage, host_stages)
             self.assertEqual(
                 await database.get_world_state(),
                 '{"gate": "open"}',

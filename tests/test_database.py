@@ -36,6 +36,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 json.loads(await database.get_world_state()), {"gate": "open"}
             )
+            latest = await database.get_latest_world_update()
+            self.assertEqual(latest["round"], 1)
+            self.assertEqual(latest["result"]["world_state"], {"gate": "open"})
+            self.assertEqual(latest["result"]["player_statusbar"]["B"], {"hp": 90})
 
             with sqlite3.connect(path) as connection:
                 tables = {

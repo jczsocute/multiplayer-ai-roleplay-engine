@@ -4,7 +4,6 @@ COMMANDS = {
     "/pause": {"type": "pause"},
     "/resume": {"type": "resume"},
     "/retry": {"type": "retry_narration"},
-    "/history": {"type": "history"},
     "/status": {"type": "status"},
 }
 

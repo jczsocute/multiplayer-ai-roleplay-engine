@@ -31,10 +31,14 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("AI 创作规范", self.loader.text("prompts/ai_guidelines.md"))
         self.assertIn("世界设定", self.loader.text("world/world.md"))
         self.assertIn("玩家 A", self.loader.character("A"))
-        self.assertEqual(self.loader.statusbar("B")["portable_battery"], 35)
+        self.assertIn("生命状态", self.loader.statusbar("A"))
+        self.assertIn("通信设备", self.loader.statusbar("B"))
+        self.assertNotEqual(
+            set(self.loader.statusbar("A")), set(self.loader.statusbar("B"))
+        )
 
     def test_world_output_template_has_required_structure(self) -> None:
-        template = self.loader.json("schemas/world_update_output.json")
+        template = self.loader.json("schemas/world_updater_output.json")
         self.assertEqual(
             set(template),
             {
@@ -46,6 +50,23 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(set(template["player_views"]), {"A", "B"})
         self.assertEqual(set(template["player_statusbar"]), {"A", "B"})
+        legacy_name = "world_" + "update_output.json"
+        self.assertFalse((self.loader.root / "schemas" / legacy_name).exists())
+
+    def test_initial_state_contains_complete_character_state(self) -> None:
+        state = self.loader.json("world/initial_state.json")
+        self.assertEqual(set(state["characters"]), {"A", "B"})
+        for player_id in ("A", "B"):
+            character = state["characters"][player_id]
+            for field in (
+                "location",
+                "physical_state",
+                "mental_state",
+                "relationships",
+                "inventory",
+                "knowledge",
+            ):
+                self.assertIn(field, character)
 
     def test_narration_prompt_requests_plain_text_not_json(self) -> None:
         prompt = self.loader.text("prompts/narration.md")

@@ -57,7 +57,7 @@ class WorldUpdater:
 
 # JSON 输出格式示例
 
-{json.dumps(self.loader.json("schemas/world_update_output.json"), ensure_ascii=False, indent=2)}
+{json.dumps(self.loader.json("schemas/world_updater_output.json"), ensure_ascii=False, indent=2)}
 """
         raw_result = await self.llm.generate(
             self.instructions,

@@ -8,7 +8,6 @@ from websockets.asyncio.server import ServerConnection
 @dataclass
 class Participant:
     name: str
-    is_host: bool
     role: str | None = None
     connected: bool = False
 
@@ -17,11 +16,10 @@ class Sessions:
     def __init__(self, saved_participants: list[dict] | None = None) -> None:
         self.participants: dict[str, Participant] = {}
         for saved in saved_participants or []:
-            participant = Participant(
-                saved["name"], bool(saved["is_host"]), saved.get("role")
-            )
+            participant = Participant(saved["name"], saved.get("role"))
             self.participants[participant.name] = participant
         self.connections: dict[str, ServerConnection] = {}
+        self.host_connection: ServerConnection | None = None
         self._lock = asyncio.Lock()
 
     async def join(
@@ -40,10 +38,22 @@ class Sessions:
                 return participant, False
             if len(self.participants) >= 2:
                 return None
-            participant = Participant(name, is_host=not self.participants, connected=True)
+            participant = Participant(name, connected=True)
             self.participants[name] = participant
             self.connections[name] = websocket
             return participant, True
+
+    async def join_host(self, websocket: ServerConnection) -> bool:
+        async with self._lock:
+            if self.host_connection is not None:
+                return False
+            self.host_connection = websocket
+            return True
+
+    async def remove_host(self, websocket: ServerConnection) -> None:
+        async with self._lock:
+            if self.host_connection is websocket:
+                self.host_connection = None
 
     async def add(self, role: str, websocket: ServerConnection) -> bool:
         """Compatibility helper used by focused round tests."""
@@ -54,31 +64,25 @@ class Sessions:
                 return False
             participant = self.participants.get(role)
             if participant is None:
-                participant = Participant(role, role == "A", role)
+                participant = Participant(role, role)
                 self.participants[role] = participant
             participant.role = role
             participant.connected = True
             self.connections[role] = websocket
             return True
 
-    async def assign_roles(self, host_name: str, host_role: str) -> dict[str, str]:
-        if host_role not in ("A", "B"):
-            raise ValueError("host_role must be A or B")
+    async def assign_roles(self, player_a: str, player_b: str) -> dict[str, str]:
         async with self._lock:
-            host = self.participants.get(host_name)
-            if host is None or not host.is_host:
-                raise ValueError("only the host can assign roles")
             if len(self.participants) != 2:
                 raise ValueError("two participants are required before assigning roles")
+            if not all(participant.connected for participant in self.participants.values()):
+                raise ValueError("both participants must be connected before assigning roles")
             if self.roles_assigned:
                 raise ValueError("roles have already been assigned")
-            other = next(
-                participant
-                for name, participant in self.participants.items()
-                if name != host_name
-            )
-            host.role = host_role
-            other.role = "B" if host_role == "A" else "A"
+            if player_a == player_b or {player_a, player_b} != set(self.participants):
+                raise ValueError("assign exactly the two connected participant names")
+            self.participants[player_a].role = "A"
+            self.participants[player_b].role = "B"
             return {
                 name: participant.role
                 for name, participant in self.participants.items()
@@ -117,7 +121,6 @@ class Sessions:
                 "participants": [
                     {
                         "name": participant.name,
-                        "is_host": participant.is_host,
                         "role": participant.role,
                         "connected": participant.connected,
                     }
@@ -149,3 +152,14 @@ class Sessions:
             connection = self.connections.get(name) if name else None
         if connection is not None:
             await connection.send(payload)
+
+    async def send_host(self, message: dict) -> None:
+        payload = json.dumps(message, ensure_ascii=False)
+        async with self._lock:
+            connection = self.host_connection
+        if connection is not None:
+            try:
+                await connection.send(payload)
+            except Exception:
+                # Host is an optional observer; its disconnect must not stop a round.
+                pass

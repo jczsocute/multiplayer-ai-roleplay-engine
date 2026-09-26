@@ -109,11 +109,14 @@ class Database:
     async def get_latest_narration(self, player_id: str) -> dict | None:
         return await asyncio.to_thread(self._get_latest_narration_sync, player_id)
 
+    async def get_latest_world_update(self) -> dict | None:
+        return await asyncio.to_thread(self._get_latest_world_update_sync)
+
     async def get_participants(self) -> list[dict]:
         return await asyncio.to_thread(self._get_participants_sync)
 
-    async def register_participant(self, name: str, is_host: bool) -> None:
-        await asyncio.to_thread(self._register_participant_sync, name, is_host)
+    async def register_participant(self, name: str) -> None:
+        await asyncio.to_thread(self._register_participant_sync, name)
 
     async def save_role_assignment(self, assignments: dict[str, str]) -> None:
         await asyncio.to_thread(self._save_role_assignment_sync, assignments)
@@ -300,21 +303,54 @@ class Database:
             ).fetchone()
         return None if row is None else {"round": row[0], "text": row[1]}
 
+    def _get_latest_world_update_sync(self) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT round_number, result_world_state FROM rounds
+                   WHERE result_world_state IS NOT NULL
+                   ORDER BY round_number DESC LIMIT 1"""
+            ).fetchone()
+            if row is None:
+                return None
+            round_id, world_state = row
+            public = connection.execute(
+                "SELECT content FROM public_world_info WHERE round_id = ?", (round_id,)
+            ).fetchone()
+            views = dict(connection.execute(
+                "SELECT player_id, view_content FROM player_views WHERE round_id = ?",
+                (round_id,),
+            ).fetchall())
+            statusbars = dict(connection.execute(
+                "SELECT player_id, statusbar_content FROM players"
+            ).fetchall())
+        return {
+            "round": round_id,
+            "result": {
+                "world_state": self._parse_content(world_state),
+                "public_information": self._parse_content(public[0]) if public else {},
+                "player_views": {
+                    player_id: self._parse_content(content)
+                    for player_id, content in views.items()
+                },
+                "player_statusbar": {
+                    player_id: self._parse_content(content)
+                    for player_id, content in statusbars.items()
+                },
+            },
+        }
+
     def _get_participants_sync(self) -> list[dict]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT name, is_host, role FROM participants ORDER BY id"
+                "SELECT name, role FROM participants ORDER BY id"
             ).fetchall()
-        return [
-            {"name": name, "is_host": bool(is_host), "role": role}
-            for name, is_host, role in rows
-        ]
+        return [{"name": name, "role": role} for name, role in rows]
 
-    def _register_participant_sync(self, name: str, is_host: bool) -> None:
+    def _register_participant_sync(self, name: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO participants (name, is_host) VALUES (?, ?)",
-                (name, int(is_host)),
+                "INSERT OR IGNORE INTO participants (name) VALUES (?)",
+                (name,),
             )
 
     def _save_role_assignment_sync(self, assignments: dict[str, str]) -> None:

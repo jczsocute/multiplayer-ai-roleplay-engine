@@ -24,8 +24,9 @@ class Narrator:
     async def narrate(
         self,
         player_id: str,
-        public_world_info: str,
-        player_view: str,
+        public_world_info: object,
+        player_view: object,
+        player_statusbar: object,
         chat_history: list[dict[str, str]],
     ) -> dict:
         input_text = f"""# 玩家
@@ -43,6 +44,10 @@ class Narrator:
 # 玩家私有可见信息
 
 {self._format(player_view)}
+
+# 玩家当前状态栏
+
+{self._format(player_statusbar)}
 
 # 玩家历史聊天
 

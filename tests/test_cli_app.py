@@ -6,7 +6,7 @@ from pathlib import Path
 from client.protocol import parse_input
 from server.database import Database
 from server.main import GameServer
-from server.models import PlayerStatus
+from server.models import CompletedRound, PlayerStatus
 from server.round_manager import RoundManager
 from server.scenario_manager import ScenarioManager
 from server.session import Sessions
@@ -36,6 +36,13 @@ class JoinThenDisconnectConnection(FakeConnection):
 
     async def close(self, **_kwargs) -> None:
         pass
+
+
+class HostJoinThenDisconnectConnection(JoinThenDisconnectConnection):
+    remote_address = ("127.0.0.1", 12345)
+
+    async def recv(self) -> str:
+        return json.dumps({"type": "join_host"})
 
 
 class ScenarioManagerTests(unittest.TestCase):
@@ -81,18 +88,19 @@ class ScenarioManagerTests(unittest.TestCase):
 
 
 class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
-    async def test_lobby_host_assignment_and_third_connection_rejection(self) -> None:
+    async def test_players_are_not_hosts_and_host_does_not_take_player_slot(self) -> None:
         sessions = Sessions()
+        host = FakeConnection()
+        self.assertTrue(await sessions.join_host(host))
         first = await sessions.join("Chengzhe", FakeConnection())
         second = await sessions.join("Alice", FakeConnection())
 
-        self.assertTrue(first[0].is_host)
+        self.assertFalse(hasattr(first[0], "is_host"))
         self.assertIsNone(first[0].role)
-        self.assertFalse(second[0].is_host)
         self.assertIsNone(second[0].role)
         self.assertIsNone(await sessions.join("Third", FakeConnection()))
 
-        assignments = await sessions.assign_roles("Chengzhe", "B")
+        assignments = await sessions.assign_roles("Alice", "Chengzhe")
 
         self.assertEqual(assignments, {"Chengzhe": "B", "Alice": "A"})
         self.assertTrue(sessions.roles_assigned)
@@ -138,16 +146,67 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            await database.register_participant("Chengzhe", True)
-            await database.register_participant("Alice", False)
+            await database.register_participant("Chengzhe")
+            await database.register_participant("Alice")
             await database.save_role_assignment({"Chengzhe": "B", "Alice": "A"})
 
             restored = Sessions(await database.get_participants())
             joined = await restored.join("Chengzhe", FakeConnection())
 
             self.assertFalse(joined[1])
-            self.assertTrue(joined[0].is_host)
             self.assertEqual(joined[0].role, "B")
+
+    async def test_host_command_assigns_roles_and_activates_lobby(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            server = GameServer(database, None, None, None, participants=[])
+            await server.sessions.join("Chengzhe", FakeConnection())
+            await server.sessions.join("Alice", FakeConnection())
+            host = FakeConnection()
+            await server.sessions.join_host(host)
+            self.assertTrue(all(
+                player.status == PlayerStatus.LOBBY
+                for player in server.rounds.players.values()
+            ))
+
+            await server._handle_host_command(
+                host,
+                json.dumps({
+                    "type": "assign_roles",
+                    "player_a": "Alice",
+                    "player_b": "Chengzhe",
+                }),
+            )
+
+            self.assertEqual(await server.sessions.role_for("Alice"), "A")
+            self.assertEqual(await server.sessions.role_for("Chengzhe"), "B")
+            self.assertTrue(all(
+                player.status == PlayerStatus.EDITING
+                for player in server.rounds.players.values()
+            ))
+
+    async def test_host_reconnect_receives_latest_world_update(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            result = {
+                "world_state": {"gate": "open"},
+                "public_information": {"time": "noon"},
+                "player_views": {"A": {"seen": 1}, "B": {"seen": 2}},
+                "player_statusbar": {"A": {"hp": 90}, "B": {"hp": 80}},
+            }
+            await database.save_world_update(
+                CompletedRound(1, {"A": "open", "B": "watch"}), result
+            )
+            server = GameServer(database, None, None, None)
+            host = HostJoinThenDisconnectConnection("Host")
+
+            await server.handler(host)
+
+            updates = [message for message in host.messages if message["type"] == "world_update"]
+            self.assertEqual(updates[0]["round"], 1)
+            self.assertEqual(updates[0]["result"], result)
 
     async def test_statusbar_is_only_sent_to_its_player(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -173,8 +232,8 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
             participants = [
-                {"name": "Chengzhe", "is_host": True, "role": "A"},
-                {"name": "Alice", "is_host": False, "role": "B"},
+                {"name": "Chengzhe", "role": "A"},
+                {"name": "Alice", "role": "B"},
             ]
             server = GameServer(database, None, None, None, participants=participants)
             connection_a = FakeConnection()
@@ -224,8 +283,8 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
             participants = [
-                {"name": "Chengzhe", "is_host": True, "role": "A"},
-                {"name": "Alice", "is_host": False, "role": "B"},
+                {"name": "Chengzhe", "role": "A"},
+                {"name": "Alice", "role": "B"},
             ]
             server = GameServer(database, None, None, None, participants=participants)
             connection_b = FakeConnection()

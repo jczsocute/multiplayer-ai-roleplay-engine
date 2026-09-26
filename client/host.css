@@ -2,48 +2,33 @@ Screen {
     layout: vertical;
 }
 
-#identity {
+#host-identity {
     height: 1;
     padding: 0 1;
     color: $text-muted;
 }
 
-#history {
+#host-history {
     height: 1fr;
     border: solid $primary;
     padding: 0 1;
     scrollbar-gutter: stable;
 }
 
-#lobby {
-    display: none;
+#host-players {
     height: auto;
-    border: round $secondary;
+    min-height: 8;
+    border-top: solid $primary;
     padding: 0 1;
 }
 
-#collaboration {
+#host-processing {
     height: 3;
     content-align: center middle;
     border-top: solid $primary;
     border-bottom: solid $primary;
 }
 
-#draft-label, #command-label {
-    height: 1;
-    padding: 0 1;
-    color: $text-muted;
-}
-
-#draft-editor {
-    height: 8;
-    border: tall $accent;
-}
-
-#draft-editor.-read-only {
-    border: tall #808080;
-}
-
-#command-input {
+#host-command {
     height: 3;
 }

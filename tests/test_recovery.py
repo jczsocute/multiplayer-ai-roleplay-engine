@@ -39,7 +39,12 @@ class MockNarrator:
         self.calls = []
 
     async def narrate(
-        self, player_id: str, public_world_info: str, player_view: str, chat_history: list
+        self,
+        player_id: str,
+        public_world_info: str,
+        player_view: str,
+        player_statusbar: dict,
+        chat_history: list,
     ) -> dict:
         self.calls.append(player_id)
         return {"text": f"Narration {player_id}", "status": {}}
