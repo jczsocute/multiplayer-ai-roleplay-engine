@@ -394,14 +394,14 @@ class GameApp(App):
         history.clear()
         entries = message.get("history", [])
         for item in entries:
-            if item.get("kind") != "statusbar":
-                self._write_role_entry(history, int(item["round"]), item)
-        if not any(item.get("kind") in ("action", "narration") for item in entries):
+            self._write_role_entry(history, int(item["round"]), item)
+        if not entries:
             history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
-        history.write(
-            self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
-            scroll_end=False,
-        )
+        if not any(item.get("kind") == "statusbar" for item in entries):
+            history.write(
+                self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
+                scroll_end=False,
+            )
         history.scroll_end(animate=False)
         if "draft" in message:
             self.draft_revision += 1
@@ -413,16 +413,28 @@ class GameApp(App):
     def _append_live_round(self, entries: list[dict], statusbar) -> None:
         history = self.query_one("#history", RichLog)
         at_bottom = history.is_vertical_scroll_end
+        titles = {
+            "action": "本轮行动",
+            "narration": "本轮输出",
+            "statusbar": "本轮状态栏",
+        }
         for item in entries:
-            if item.get("kind") == "narration":
+            kind = item.get("kind")
+            if kind == "statusbar":
                 history.write(
-                    Panel(str(item.get("content", "")), title="本轮输出"),
+                    self._statusbar_panel(item.get("content", {}), titles[kind]),
                     scroll_end=at_bottom,
                 )
-        history.write(
-            self._statusbar_panel(statusbar, "本轮状态栏"),
-            scroll_end=at_bottom,
-        )
+            elif kind in titles:
+                history.write(
+                    Panel(str(item.get("content", "")), title=titles[kind]),
+                    scroll_end=at_bottom,
+                )
+        if not any(item.get("kind") == "statusbar" for item in entries):
+            history.write(
+                self._statusbar_panel(statusbar, "本轮状态栏"),
+                scroll_end=at_bottom,
+            )
 
     @staticmethod
     def _write_role_entry(
@@ -436,8 +448,14 @@ class GameApp(App):
         titles = {
             "action": f"第 {round_id} 轮行动",
             "narration": f"第 {round_id} 轮输出",
+            "statusbar": f"第 {round_id} 轮状态栏",
         }
-        if kind in titles:
+        if kind == "statusbar":
+            history.write(
+                GameApp._statusbar_panel(item.get("content", {}), titles[kind]),
+                scroll_end=scroll_end,
+            )
+        elif kind in titles:
             history.write(
                 Panel(str(item.get("content", "")), title=titles[kind]),
                 scroll_end=scroll_end,

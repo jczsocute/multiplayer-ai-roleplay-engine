@@ -21,7 +21,7 @@ class TestGameApp(GameApp):
 
 
 class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_role_view_ends_with_current_statusbar_and_hides_old_statusbars(self) -> None:
+    async def test_role_view_renders_each_complete_round_in_order(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
@@ -37,9 +37,12 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
                 "history": [
                     {"round": 1, "kind": "action", "content": "检查房门"},
                     {"round": 1, "kind": "narration", "content": "门后传来脚步声"},
-                    {"round": 1, "kind": "statusbar", "content": {"旧状态": "不再单列"}},
+                    {"round": 1, "kind": "statusbar", "content": {"精神状态": "警觉"}},
+                    {"round": 2, "kind": "action", "content": "推开房门"},
+                    {"round": 2, "kind": "narration", "content": "冷风迎面吹来"},
+                    {"round": 2, "kind": "statusbar", "content": {"精神状态": "紧张"}},
                 ],
-                "statusbar": {"精神状态": "警觉"},
+                "statusbar": {"精神状态": "紧张"},
                 "public_information": {"禁止展示": "幕后倒计时"},
             })
 
@@ -47,13 +50,16 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app._draft_editor().text, "")
             rendered = "\n".join(line.text for line in app.query_one("#history", RichLog).lines)
             self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
-            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("当前状态栏"))
+            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("第 1 轮状态栏"))
+            self.assertLess(rendered.index("第 1 轮状态栏"), rendered.index("第 2 轮行动"))
+            self.assertLess(rendered.index("第 2 轮行动"), rendered.index("第 2 轮输出"))
+            self.assertLess(rendered.index("第 2 轮输出"), rendered.index("第 2 轮状态栏"))
             self.assertIn("精神状态", rendered)
-            self.assertNotIn("旧状态", rendered)
+            self.assertNotIn("当前状态栏", rendered)
             self.assertNotIn("幕后倒计时", rendered)
             self.assertEqual(str(app._statusbar_panel({}, "状态栏").border_style), "green")
 
-    async def test_completed_round_appends_output_then_green_statusbar(self) -> None:
+    async def test_completed_round_appends_action_output_and_green_statusbar(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
@@ -68,18 +74,19 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
                 "round": 2,
                 "role": "A",
                 "entries": [
-                    {"kind": "action", "content": "行动不重复追加"},
+                    {"kind": "action", "content": "推开房门"},
                     {"kind": "narration", "content": "新的叙事"},
-                    {"kind": "statusbar", "content": {"旧": "值"}},
+                    {"kind": "statusbar", "content": {"体力": "疲惫"}},
                 ],
                 "statusbar": {"体力": "疲惫"},
             })
 
             rendered = "\n".join(line.text for line in app.query_one("#history", RichLog).lines)
+            self.assertLess(rendered.index("本轮行动"), rendered.index("本轮输出"))
             self.assertLess(rendered.index("本轮输出"), rendered.index("本轮状态栏"))
+            self.assertIn("推开房门", rendered)
             self.assertIn("新的叙事", rendered)
             self.assertIn("体力", rendered)
-            self.assertNotIn("行动不重复追加", rendered)
 
     async def test_spectator_commands_are_limited_to_chat_and_view(self) -> None:
         app = TestGameApp()

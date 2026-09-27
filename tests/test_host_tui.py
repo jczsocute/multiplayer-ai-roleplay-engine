@@ -17,7 +17,7 @@ class TestHostApp(HostApp):
 
 
 class HostTuiTests(unittest.IsolatedAsyncioTestCase):
-    async def test_role_view_uses_history_area_for_current_statusbar(self) -> None:
+    async def test_role_view_renders_complete_round_with_statusbar(self) -> None:
         app = TestHostApp()
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
@@ -26,7 +26,7 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
                 "history": [
                     {"round": 1, "kind": "action", "content": "观察窗外"},
                     {"round": 1, "kind": "narration", "content": "雨幕遮住远处"},
-                    {"round": 1, "kind": "statusbar", "content": {"旧状态": "忽略"}},
+                    {"round": 1, "kind": "statusbar", "content": {"法力": 40}},
                 ],
                 "statusbar": {"法力": 40},
             })
@@ -35,10 +35,33 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
                 line.text for line in app.query_one("#host-history", RichLog).lines
             )
             self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
-            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("当前状态栏"))
+            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("第 1 轮状态栏"))
             self.assertIn("法力", rendered)
-            self.assertNotIn("旧状态", rendered)
+            self.assertNotIn("当前状态栏", rendered)
             self.assertEqual(str(app._statusbar_panel({}, "状态栏").border_style), "green")
+
+    async def test_live_round_renders_action_narration_and_statusbar(self) -> None:
+        app = TestHostApp()
+        async with app.run_test(size=(100, 36)):
+            app.view = "A"
+            await app._handle_message({
+                "type": "role_round",
+                "round": 3,
+                "role": "A",
+                "entries": [
+                    {"kind": "action", "content": "点亮提灯"},
+                    {"kind": "narration", "content": "灯光照亮走廊"},
+                    {"kind": "statusbar", "content": {"灯油": 80}},
+                ],
+                "statusbar": {"灯油": 80},
+            })
+
+            rendered = "\n".join(
+                line.text for line in app.query_one("#host-history", RichLog).lines
+            )
+            self.assertLess(rendered.index("本轮行动"), rendered.index("本轮输出"))
+            self.assertLess(rendered.index("本轮输出"), rendered.index("本轮状态栏"))
+            self.assertIn("点亮提灯", rendered)
 
     async def test_assign_command_maps_two_player_names(self) -> None:
         app = TestHostApp()

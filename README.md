@@ -171,7 +171,7 @@ Host 只接受 localhost 连接；如需从另一台管理设备操作，可使�
 
 `/assign` 可以重复用于换人，但当前仍有扮演者的 A、B 都必须处于 `PAUSED`；没有扮演者的角色视为空位。AI 正在 `PROCESSING` 时不允许换人。只有 role 实际变化的 User 会收到 UI reset 和完整角色视图；未变化的 Player 保留原状态。新接管角色进入 `EDITING` 且 Draft 为空，原 Player 降为 Spectator 并默认继续查看其原角色。
 
-Player/Spectator TUI 上方的可滚动文字框显示当前角色历史、Room Chat 和角色状态栏，中间只显示 A/B 工作状态，底部是多行 Draft 与单行 Command。状态栏不再占用独立的常驻区域；载入角色视图时按“各轮行动 → 各轮输出 → 当前状态栏”显示，完成新一轮时追加“本轮输出 → 本轮状态栏”。状态栏使用绿色框线，内容仍以 YAML 展示。`public_information` 仅作为 Narrator 的共享创作输入，不直接展示给玩家。
+Player/Spectator TUI 上方的可滚动文字框显示当前角色历史、Room Chat 和角色状态栏，中间只显示 A/B 工作状态，底部是多行 Draft 与单行 Command。状态栏不再占用独立的常驻区域；无论载入历史还是实时完成新一轮，每轮都按“行动 → 输出 → 状态栏”完整显示。状态栏使用绿色框线，内容仍以 YAML 展示。`public_information` 仅作为 Narrator 的共享创作输入，不直接展示给玩家。
 
 Player 命令：
 
@@ -192,7 +192,7 @@ Host 命令：`/assign <nicknameA> <nicknameB>`、`/chat`、`/view A`、`/view B
 
 双方提交后进入 `PROCESSING`。服务器只在阶段切换时广播 `WORLD_UPDATING`、`VIEW_GENERATING`、`NARRATION_GENERATING`，客户端在本地按秒计时并显示“世界更新中 · 3s”等状态。AI 完成后各自收到私有 Narration，服务器进入下一轮并清空旧 Draft。
 
-Host TUI 与普通客户端使用相同的 Identity、主视图、A/B 状态、Draft 和 Command 布局，并额外显示所有在线用户。它也不保留独立 Statusbar 区域：`/view A`、`/view B` 会在主文字框末尾显示绿色框线的当前状态栏；`/view world` 以 YAML 显示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`。完整调试数据不会发送给普通 User。
+Host TUI 与普通客户端使用相同的 Identity、主视图、A/B 状态、Draft 和 Command 布局，并额外显示所有在线用户。它也不保留独立 Statusbar 区域：`/view A`、`/view B` 会在主文字框中逐轮显示行动、输出和绿色框线的状态栏；`/view world` 以 YAML 显示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`。完整调试数据不会发送给普通 User。
 
 ### Story Plane 与 Room Plane
 
@@ -208,9 +208,9 @@ Player 固定查看自己的角色；Spectator 可用 `/view A|B`，Host 可额�
 
 1. 该角色提交的 Action
 2. 该角色收到的 Narration
-3. 所有已完成回合之后显示最新的当前 Statusbar
+3. 该回合结束后的 Statusbar
 
-服务器协议仍保留每轮 Statusbar 快照，但 TUI 刷新时不在每个旧回合后重复展示状态栏。新回合完成时，当前打开的角色视图会即时追加“本轮输出”和绿色框线的“本轮状态栏”。
+每个已完成回合都是不可拆分的 Action → Narration → Statusbar 记录。TUI 重建历史时逐轮展示三者；新回合完成时，当前打开该角色视图的 Player、Spectator 或 Host 也会立即追加“本轮行动 → 本轮输出 → 本轮状态栏”，无需重新执行 `/view`。
 
 Spectator 和 Host role view 不包含当前 Draft。只有当前真正扮演该角色的 Player 会在私有 `role_view`/`status` payload 中收到自己的 Draft。
 
