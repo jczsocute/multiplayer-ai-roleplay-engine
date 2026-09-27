@@ -39,3 +39,7 @@ logs/*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Web development dependencies (the production build is committed).
+/web/node_modules/
+/web/*.tsbuildinfo

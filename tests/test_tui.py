@@ -26,6 +26,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
                 "type": "joined",
+                "protocol_version": 2,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,
@@ -64,6 +65,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
                 "type": "joined",
+                "protocol_version": 2,
                 "name": "Tester",
                 "role": None,
                 "view_role": "A",
@@ -93,6 +95,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)) as pilot:
             await app._handle_message({
                 "type": "joined",
+                "protocol_version": 2,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,
@@ -120,6 +123,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)) as pilot:
             await app._handle_message({
                 "type": "joined",
+                "protocol_version": 2,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,

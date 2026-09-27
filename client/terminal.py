@@ -20,6 +20,8 @@ except ModuleNotFoundError:  # Supports: python client/terminal.py
     from display import room_message_text, to_yaml
 
 
+PROTOCOL_VERSION = 2
+
 STATUS_LABELS = {
     "LOBBY": ("大厅等待", "grey50"),
     "EDITING": ("编辑中", "yellow"),
@@ -65,10 +67,11 @@ class GameApp(App):
         Binding("pagedown", "history_page_down", show=False, priority=True),
     ]
 
-    def __init__(self, uri: str, nickname: str) -> None:
+    def __init__(self, uri: str, nickname: str, room_key: str = "") -> None:
         super().__init__()
         self.uri = uri
         self.nickname = nickname
+        self.room_key = room_key
         self.websocket = None
         self.role: str | None = None
         self.view_role: str | None = None
@@ -112,7 +115,7 @@ class GameApp(App):
             async with connect(self.uri) as websocket:
                 self.websocket = websocket
                 await websocket.send(json.dumps({
-                    "type": "join", "name": self.nickname
+                    "type": "join", "name": self.nickname, "room_key": self.room_key
                 }, ensure_ascii=False))
                 async for raw_message in websocket:
                     await self._handle_message(json.loads(raw_message))
@@ -124,6 +127,10 @@ class GameApp(App):
     async def _handle_message(self, message: dict) -> None:
         message_type = message.get("type")
         if message_type == "joined":
+            if message.get("protocol_version", 1) != PROTOCOL_VERSION:
+                raise ValueError(
+                    f"不支持的协议版本：{message.get('protocol_version')}（客户端支持 {PROTOCOL_VERSION}）"
+                )
             self.role = message.get("role")
             self.view_role = message.get("view_role")
             self.scenario = message["scenario"]
@@ -153,7 +160,7 @@ class GameApp(App):
             return
         if message_type == "role_round":
             if message.get("role") == self.view_role:
-                self._append_live_round(message.get("entries", []), message.get("statusbar", {}))
+                self._append_live_round(message.get("entries", []))
             return
         if message_type == "room_message":
             self._append(room_message_text(message))
@@ -189,6 +196,7 @@ class GameApp(App):
         if command == "/quit":
             await self._sync_draft_now()
             if self.websocket is not None:
+                await self._send({"type": "leave"})
                 await self.websocket.close()
             self.exit()
             return
@@ -397,11 +405,6 @@ class GameApp(App):
             self._write_role_entry(history, int(item["round"]), item)
         if not entries:
             history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
-        if not any(item.get("kind") == "statusbar" for item in entries):
-            history.write(
-                self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
-                scroll_end=False,
-            )
         history.scroll_end(animate=False)
         if "draft" in message:
             self.draft_revision += 1
@@ -410,7 +413,7 @@ class GameApp(App):
             self.draft_initialized = True
         self._update_identity()
 
-    def _append_live_round(self, entries: list[dict], statusbar) -> None:
+    def _append_live_round(self, entries: list[dict]) -> None:
         history = self.query_one("#history", RichLog)
         at_bottom = history.is_vertical_scroll_end
         titles = {
@@ -430,11 +433,6 @@ class GameApp(App):
                     Panel(str(item.get("content", "")), title=titles[kind]),
                     scroll_end=at_bottom,
                 )
-        if not any(item.get("kind") == "statusbar" for item in entries):
-            history.write(
-                self._statusbar_panel(statusbar, "本轮状态栏"),
-                scroll_end=at_bottom,
-            )
 
     @staticmethod
     def _write_role_entry(
@@ -481,10 +479,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI RP Engine Textual client")
     parser.add_argument(
         "--uri",
-        default=os.getenv("SERVER_URI", "ws://127.0.0.1:8765"),
+        default=os.getenv("SERVER_URI", "ws://127.0.0.1:8080/ws"),
         help="WebSocket server URI",
     )
     parser.add_argument("--name", help="nickname for this connection")
+    parser.add_argument(
+        "--room-key",
+        default=os.getenv("ROOM_KEY", ""),
+        help="shared room key for the public endpoint",
+    )
     return parser.parse_args()
 
 
@@ -493,7 +496,8 @@ def main() -> None:
     nickname = (arguments.name or input("请输入昵称：\n> ")).strip()
     if not nickname:
         raise SystemExit("昵称不能为空")
-    GameApp(arguments.uri, nickname).run()
+    room_key = arguments.room_key.strip()
+    GameApp(arguments.uri, nickname, room_key).run()
 
 
 if __name__ == "__main__":

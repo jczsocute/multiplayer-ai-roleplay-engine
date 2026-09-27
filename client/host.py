@@ -28,6 +28,8 @@ STATUS_LABELS = {
     "PROCESSING": ("处理中", "blue"),
 }
 
+PROTOCOL_VERSION = 2
+
 PROCESSING_LABELS = {
     "WORLD_UPDATING": "世界更新中",
     "VIEW_GENERATING": "视角补全中",
@@ -97,6 +99,10 @@ class HostApp(App):
     async def _handle_message(self, message: dict) -> None:
         message_type = message.get("type")
         if message_type == "host_joined":
+            if message.get("protocol_version", 1) != PROTOCOL_VERSION:
+                raise ValueError(
+                    f"不支持的协议版本：{message.get('protocol_version')}（客户端支持 {PROTOCOL_VERSION}）"
+                )
             self.query_one("#host-identity", Static).update(
                 f"Host · Scenario: {message.get('scenario', '')} · View: {self.view}"
             )
@@ -130,7 +136,7 @@ class HostApp(App):
             self._load_role_view(message)
         elif message_type == "role_round":
             if message.get("role") == self.view:
-                self._append_live_round(message.get("entries", []), message.get("statusbar", {}))
+                self._append_live_round(message.get("entries", []))
         elif message_type == "room_message":
             self._append(room_message_text(message))
         elif message_type == "round_complete":
@@ -233,14 +239,9 @@ class HostApp(App):
             self._write_role_entry(history, int(item["round"]), item)
         if not entries:
             history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
-        if not any(item.get("kind") == "statusbar" for item in entries):
-            history.write(
-                self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
-                scroll_end=False,
-            )
         history.scroll_end(animate=False)
 
-    def _append_live_round(self, entries: list[dict], statusbar) -> None:
+    def _append_live_round(self, entries: list[dict]) -> None:
         history = self.query_one("#host-history", RichLog)
         at_bottom = history.is_vertical_scroll_end
         titles = {
@@ -260,11 +261,6 @@ class HostApp(App):
                     Panel(str(item.get("content", "")), title=titles[kind]),
                     scroll_end=at_bottom,
                 )
-        if not any(item.get("kind") == "statusbar" for item in entries):
-            history.write(
-                self._statusbar_panel(statusbar, "本轮状态栏"),
-                scroll_end=at_bottom,
-            )
 
     @staticmethod
     def _write_role_entry(
@@ -313,7 +309,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AI RP Engine Host TUI")
     parser.add_argument(
         "--uri",
-        default=os.getenv("SERVER_URI", "ws://127.0.0.1:8765"),
+        default=os.getenv("HOST_SERVER_URI", "ws://127.0.0.1:8766"),
         help="local WebSocket server URI",
     )
     arguments = parser.parse_args()

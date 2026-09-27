@@ -32,6 +32,10 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("世界设定", self.loader.text("world/world.md"))
         self.assertIn("玩家 A", self.loader.character("A"))
         self.assertEqual(self.loader.character_name("A"), "林岚")
+        self.assertEqual(self.loader.character_name("B"), "周砚")
+        roles = self.loader.json("roles.json")
+        self.assertEqual(roles["count"], 2)
+        self.assertEqual(len(roles["names"]), roles["count"])
         self.assertIn("生命状态", self.loader.statusbar("A"))
         self.assertIn("通信设备", self.loader.statusbar("B"))
         self.assertNotEqual(

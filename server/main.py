@@ -3,12 +3,14 @@ import argparse
 import ipaddress
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
-from websockets.asyncio.server import ServerConnection, serve
+from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
-from server.config import load_settings
+from server.config import load_settings, normalize_room_key
 from server.database import Database
 from server.llm.client import LLMClient
 from server.llm.narrator import Narrator
@@ -16,9 +18,14 @@ from server.llm.player_view import PlayerViewGenerator
 from server.llm.prompt_loader import PromptLoader
 from server.llm.world_update import WorldUpdater
 from server.models import CompletedRound, PlayerStatus, RoundStage
+from server.protocol import (
+    MAX_ROOM_CHAT_LENGTH,
+    MAX_WEBSOCKET_MESSAGE_BYTES,
+    PROTOCOL_VERSION,
+)
 from server.round_manager import RoundError, RoundManager
 from server.scenario_manager import ScenarioManager
-from server.session import Sessions
+from server.session import Connection, Sessions
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,50 +41,100 @@ class GameServer:
         round_number: int = 1,
         scenario_name: str = "default",
         character_names: dict[str, str] | None = None,
+        room_key: str = "test-key",
+        disconnect_grace_seconds: int = 60,
     ) -> None:
         self.database = database
         self.world_updater = world_updater
         self.player_views = player_views
         self.narrator = narrator
         self.rounds = RoundManager(round_number)
-        self.sessions = Sessions(max_users=100)
+        self.sessions = Sessions(
+            max_users=100, disconnect_grace_seconds=disconnect_grace_seconds
+        )
+        self.sessions.expiry_handler = self._on_grace_expired
         self.command_lock = asyncio.Lock()
         self.scenario_name = scenario_name
         self.character_names = character_names or {"A": "Player A", "B": "Player B"}
+        self.room_key = room_key
+        self.disconnect_grace_seconds = disconnect_grace_seconds
 
-    async def handler(self, websocket: ServerConnection) -> None:
+    async def public_handler(self, websocket: Connection) -> None:
         user_name: str | None = None
         try:
             registration = await asyncio.wait_for(websocket.recv(), timeout=15)
             message = self._decode(registration)
-            if message.get("type") == "join_host":
-                await self._serve_host(websocket)
+            command = message.get("type")
+            if command == "join_host":
+                await self._send_error(
+                    websocket, "host connections are not allowed on the public endpoint"
+                )
+                await websocket.close(code=1008)
                 return
-            if message.get("type") != "join":
-                await self._send_error(websocket, "first message must be join or join_host")
+            if command not in ("join", "resume"):
+                await self._send_error(websocket, "first message must be join or resume")
+                await websocket.close(code=1008)
+                return
+            if not self._room_key_ok(message.get("room_key")):
+                await self._send_error(websocket, "invalid room key")
                 await websocket.close(code=1008)
                 return
 
-            user = await self.sessions.join(str(message.get("name", "")), websocket)
-            if user is None:
-                await self._send_error(websocket, "room already has 100 connected users")
-                await websocket.close(code=1008)
-                return
-            user_name = user.name
-
-            logger.info("User %s connected", user_name)
-            await websocket.send(json.dumps({
-                "type": "joined",
-                "name": user.name,
-                "role": None,
-                "view_role": None,
-                "scenario": self.scenario_name,
-            }, ensure_ascii=False))
-            await self._broadcast_presence()
-            await self._broadcast_state()
-            await self._broadcast_room_message(
-                "system", f"{user.name} 已加入房间。"
-            )
+            if command == "join":
+                try:
+                    user = await self.sessions.join(str(message.get("name", "")), websocket)
+                except ValueError as exc:
+                    await self._send_error(websocket, str(exc))
+                    await websocket.close(code=1008)
+                    return
+                if user is None:
+                    await self._send_error(websocket, "房间已满，最多允许 100 名用户同时在线")
+                    await websocket.close(code=1008)
+                    return
+                user_name = user.name
+                logger.info("User %s connected", user_name)
+                await websocket.send(json.dumps({
+                    "type": "joined",
+                    "name": user.name,
+                    "role": user.role,
+                    "view_role": user.view_role,
+                    "scenario": self.scenario_name,
+                    "protocol_version": PROTOCOL_VERSION,
+                    "resume_token": user.resume_token,
+                }, ensure_ascii=False))
+                await self._broadcast_presence()
+                await self._broadcast_state()
+                await self._broadcast_room_message(
+                    "system", f"{user.name} 已加入房间。"
+                )
+            else:
+                try:
+                    user = await self.sessions.resume(
+                        str(message.get("name", "")),
+                        str(message.get("resume_token", "")),
+                        websocket,
+                    )
+                except ValueError as exc:
+                    await self._send_error(websocket, str(exc))
+                    await websocket.close(code=1008)
+                    return
+                user_name = user.name
+                logger.info("User %s resumed", user_name)
+                await websocket.send(json.dumps({
+                    "type": "resumed",
+                    "name": user.name,
+                    "role": user.role,
+                    "view_role": user.view_role,
+                    "scenario": self.scenario_name,
+                    "protocol_version": PROTOCOL_VERSION,
+                    "resume_token": user.resume_token,
+                }, ensure_ascii=False))
+                await self._broadcast_presence()
+                await self._broadcast_state()
+                await self._send_resume_view(user, websocket)
+                await self._broadcast_room_message(
+                    "system", f"{user.name} 已重新连接。"
+                )
 
             async for raw_message in websocket:
                 await self._handle_command(user_name, websocket, raw_message)
@@ -85,21 +142,47 @@ class GameServer:
             pass
         except (ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
+            await websocket.close(code=1008)
         finally:
             if user_name is not None:
-                removed = await self.sessions.remove(user_name, websocket)
-                if removed is not None:
-                    logger.info("User %s disconnected", user_name)
+                user = await self.sessions.mark_disconnected(user_name, websocket)
+                if user is not None:
+                    logger.info("User %s disconnected; grace period started", user_name)
                     await self._broadcast_presence()
                     await self._broadcast_state()
-                    text = f"{removed.name} 已离开房间。"
-                    if removed.role:
-                        text += f" Player {removed.role} 当前无人扮演。"
-                    await self._broadcast_room_message("system", text)
 
-    async def _serve_host(self, websocket: ServerConnection) -> None:
-        if not self._is_local_host(websocket):
-            await self._send_error(websocket, "host connections are limited to localhost")
+    def _room_key_ok(self, provided: object) -> bool:
+        if not self.room_key:
+            return True
+        return normalize_room_key(str(provided or "")) == normalize_room_key(self.room_key)
+
+    async def _send_resume_view(self, user, websocket: Connection) -> None:
+        if user.role:
+            await self._send_role_view(
+                websocket, user.role, include_draft=True, include_current_view=True
+            )
+        elif user.view_role:
+            await self._send_role_view(websocket, user.view_role)
+
+    async def _on_grace_expired(self, user) -> None:
+        logger.info("User %s grace period expired", user.name)
+        await self._broadcast_presence()
+        await self._broadcast_state()
+        text = f"{user.name} 已离开房间。"
+        if user.role:
+            text += f" Player {user.role} 当前无人扮演。"
+        await self._broadcast_room_message("system", text)
+
+    async def host_handler(self, websocket: Connection) -> None:
+        try:
+            registration = await asyncio.wait_for(websocket.recv(), timeout=15)
+            message = self._decode(registration)
+        except (ConnectionClosed, asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            if not isinstance(exc, (ConnectionClosed, asyncio.TimeoutError)):
+                await self._send_error(websocket, str(exc))
+            return
+        if message.get("type") != "join_host":
+            await self._send_error(websocket, "first message must be join_host")
             await websocket.close(code=1008)
             return
         if not await self.sessions.join_host(websocket):
@@ -110,6 +193,7 @@ class GameServer:
             await websocket.send(json.dumps({
                 "type": "host_joined",
                 "scenario": self.scenario_name,
+                "protocol_version": PROTOCOL_VERSION,
             }, ensure_ascii=False))
             await websocket.send(json.dumps(
                 await self.sessions.presence_snapshot(), ensure_ascii=False
@@ -128,8 +212,18 @@ class GameServer:
         finally:
             await self.sessions.remove_host(websocket)
 
+    async def handler(self, websocket: Connection) -> None:
+        """Compatibility entry point; production transports use explicit handlers."""
+        registration = await asyncio.wait_for(websocket.recv(), timeout=15)
+        message = self._decode(registration)
+        wrapper = _PreloadedConnection(websocket, registration)
+        if message.get("type") == "join_host":
+            await self.host_handler(wrapper)
+        else:
+            await self.public_handler(wrapper)
+
     async def _handle_host_command(
-        self, websocket: ServerConnection, raw_message: str
+        self, websocket: Connection, raw_message: str
     ) -> None:
         try:
             message = self._decode(raw_message)
@@ -172,13 +266,24 @@ class GameServer:
             await self._send_error(websocket, str(exc))
 
     async def _handle_command(
-        self, user_name: str, websocket: ServerConnection, raw_message: str
+        self, user_name: str, websocket: Connection, raw_message: str
     ) -> None:
         try:
             message = self._decode(raw_message)
             command = message.get("type")
             completed = None
             async with self.command_lock:
+                if command == "leave":
+                    removed = await self.sessions.leave(user_name, websocket)
+                    if removed is not None:
+                        logger.info("User %s left explicitly", user_name)
+                        await self._broadcast_presence()
+                        await self._broadcast_state()
+                        text = f"{removed.name} 已离开房间。"
+                        if removed.role:
+                            text += f" Player {removed.role} 当前无人扮演。"
+                        await self._broadcast_room_message("system", text)
+                    return
                 player_id = await self.sessions.role_for(user_name)
                 if command == "room_chat":
                     kind = "player" if player_id else "spectator"
@@ -294,7 +399,7 @@ class GameServer:
 
     async def _send_role_view(
         self,
-        websocket: ServerConnection,
+        websocket: Connection,
         role: str,
         *,
         include_draft: bool = False,
@@ -327,8 +432,10 @@ class GameServer:
         text = text.strip()
         if not text:
             raise RoundError("chat message cannot be empty")
-        if len(text) > 4000:
-            raise RoundError("chat message is too long")
+        if len(text) > MAX_ROOM_CHAT_LENGTH:
+            raise RoundError(
+                f"chat message is too long (maximum {MAX_ROOM_CHAT_LENGTH} characters)"
+            )
         # Room Plane is broadcast-only; never write this text to story chat_messages.
         await self._broadcast_room_message(kind, text, sender, role)
 
@@ -525,7 +632,7 @@ class GameServer:
         await self.sessions.send_host(message)
 
     async def _send_status(
-        self, user_name: str, websocket: ServerConnection
+        self, user_name: str, websocket: Connection
     ) -> None:
         player_id = await self.sessions.role_for(user_name)
         if player_id is None:
@@ -546,9 +653,11 @@ class GameServer:
     async def _round_snapshot(self) -> dict:
         snapshot = self.rounds.snapshot()
         assignments = await self.sessions.role_assignments()
+        connections = await self.sessions.role_connections()
         for player_id, player in snapshot["players"].items():
-            player["connected"] = player_id in assignments
+            player["connected"] = connections.get(player_id, False)
             player["user"] = assignments.get(player_id)
+            player["character_name"] = self.character_names[player_id]
         return snapshot
 
     async def _broadcast_presence(self) -> None:
@@ -566,17 +675,6 @@ class GameServer:
         await self.sessions.send_host(message)
 
     @staticmethod
-    def _is_local_host(websocket: ServerConnection) -> bool:
-        remote = getattr(websocket, "remote_address", None)
-        if remote is None:
-            return True
-        address = remote[0] if isinstance(remote, tuple) else str(remote)
-        try:
-            return ipaddress.ip_address(address).is_loopback
-        except ValueError:
-            return address == "localhost"
-
-    @staticmethod
     def _decode(raw_message: str) -> dict:
         message = json.loads(raw_message)
         if not isinstance(message, dict):
@@ -584,12 +682,42 @@ class GameServer:
         return message
 
     @staticmethod
-    async def _send_error(websocket: ServerConnection, detail: str) -> None:
+    async def _send_error(websocket: Connection, detail: str) -> None:
         await websocket.send(json.dumps({"type": "error", "detail": detail}))
 
 
-async def run_server(game_path: Path, scenario_name: str) -> None:
+class _PreloadedConnection:
+    """Keep the old direct handler useful for tests without exposing it as a listener."""
+
+    def __init__(self, connection: Any, first_message: str) -> None:
+        self.connection = connection
+        self.first_message = first_message
+
+    async def recv(self) -> str:
+        if self.first_message is not None:
+            message = self.first_message
+            self.first_message = None
+            return message
+        return await self.connection.recv()
+
+    async def send(self, payload: str) -> None:
+        await self.connection.send(payload)
+
+    async def close(self, **kwargs) -> None:
+        await self.connection.close(**kwargs)
+
+    def __aiter__(self):
+        return self.connection.__aiter__()
+
+
+async def run_server(game_path: Path, scenario_name: str, no_room_key: bool = False) -> None:
     settings = load_settings()
+    if no_room_key:
+        settings = replace(settings, room_key="")
+    if settings.room_key:
+        logger.info("Room Key: %s", settings.room_key)
+    else:
+        logger.info("Room Key: disabled (--no-room-key)")
     loader = PromptLoader(str(game_path))
     database = Database(str(game_path / "game.db"))
     await database.initialize(
@@ -608,12 +736,43 @@ async def run_server(game_path: Path, scenario_name: str) -> None:
         await database.current_round(),
         scenario_name,
         {"A": loader.character_name("A"), "B": loader.character_name("B")},
+        room_key=settings.room_key,
+        disconnect_grace_seconds=settings.disconnect_grace_seconds,
     )
     await game.recover_round()
 
-    async with serve(game.handler, settings.host, settings.port) as websocket_server:
-        logger.info("Server listening on ws://%s:%s", settings.host, settings.port)
-        await websocket_server.serve_forever()
+    if not _is_loopback(settings.host_ws_host):
+        raise RuntimeError("HOST_WS_HOST must be a loopback address")
+
+    from server.web import create_web_app, serve_web
+
+    app = create_web_app(game, ui_font_scale=settings.ui_font_scale)
+    async with serve(
+        game.host_handler,
+        settings.host_ws_host,
+        settings.host_ws_port,
+        max_size=MAX_WEBSOCKET_MESSAGE_BYTES,
+    ):
+        logger.info(
+            "Host WebSocket listening on ws://%s:%s",
+            settings.host_ws_host,
+            settings.host_ws_port,
+        )
+        await serve_web(
+            app,
+            settings.web_host,
+            settings.web_port,
+            MAX_WEBSOCKET_MESSAGE_BYTES,
+        )
+
+
+def _is_loopback(address: str) -> bool:
+    if address == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
 
 
 def main() -> None:
@@ -625,6 +784,11 @@ def main() -> None:
     management.add_argument("--create-scenario")
     management.add_argument("--delete-scenario")
     parser.add_argument("--game", default=None)
+    parser.add_argument(
+        "--no-room-key",
+        action="store_true",
+        help="start without a room key; web only asks for a nickname",
+    )
     args = parser.parse_args()
     manager = ScenarioManager()
     if args.list_scenarios:
@@ -664,7 +828,7 @@ def main() -> None:
         else:
             parser.error(f"unknown game or same-named scenario: {game_name}")
         try:
-            asyncio.run(run_server(game_path, game_name))
+            asyncio.run(run_server(game_path, game_name, no_room_key=args.no_room_key))
         except KeyboardInterrupt:
             logger.info("Server stopped")
         return
@@ -682,7 +846,7 @@ def main() -> None:
     game_name = template_name
     game_path = manager.create_game(template_name, game_name)
     try:
-        asyncio.run(run_server(game_path, template_name))
+        asyncio.run(run_server(game_path, template_name, no_room_key=args.no_room_key))
     except KeyboardInterrupt:
         logger.info("Server stopped")
 

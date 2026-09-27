@@ -21,6 +21,16 @@ class PromptLoader:
         return self.text(f"characters/{filename}")
 
     def character_name(self, player_id: str) -> str:
+        roles_file = self.root / "roles.json"
+        if roles_file.exists():
+            try:
+                data = json.loads(roles_file.read_text(encoding="utf-8"))
+                names = data.get("names") or []
+                index = {"A": 0, "B": 1}.get(player_id)
+                if index is not None and index < len(names) and names[index]:
+                    return str(names[index])
+            except (json.JSONDecodeError, OSError):
+                pass
         for line in self.character(player_id).splitlines():
             stripped = line.strip()
             for prefix in ("姓名：", "姓名:", "Name:"):

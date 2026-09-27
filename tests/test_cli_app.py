@@ -26,7 +26,7 @@ class JoinThenDisconnectConnection(FakeConnection):
         self.name = name
 
     async def recv(self) -> str:
-        return json.dumps({"type": "join", "name": self.name})
+        return json.dumps({"type": "join", "name": self.name, "room_key": "test-key"})
 
     def __aiter__(self):
         return self
@@ -277,7 +277,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             recovery = await database.get_recovery_data(1)
             self.assertEqual(recovery["players"]["A"]["action"], "最新完整 Draft")
 
-    async def test_handler_broadcasts_reconnect_and_leave_system_messages(self) -> None:
+    async def test_handler_broadcasts_join_but_not_leave_during_grace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
@@ -293,7 +293,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
                 if message.get("type") == "room_message"
             ]
             self.assertIn("Chengzhe 已加入房间。", room_texts)
-            self.assertIn("Chengzhe 已离开房间。", room_texts)
+            self.assertNotIn("Chengzhe 已离开房间。", room_texts)
 
 
 class CliRoundFlowTests(unittest.TestCase):

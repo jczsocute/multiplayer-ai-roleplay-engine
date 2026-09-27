@@ -1,4 +1,5 @@
 from server.models import CompletedRound, Player, PlayerStatus, RoundStage
+from server.protocol import MAX_ACTION_LENGTH
 
 
 class RoundError(ValueError):
@@ -17,6 +18,10 @@ class RoundManager:
         player = self._player(player_id)
         if player.status != PlayerStatus.EDITING:
             raise RoundError("actions can only be edited while EDITING")
+        if len(text) > MAX_ACTION_LENGTH:
+            raise RoundError(
+                f"action is too long (maximum {MAX_ACTION_LENGTH} characters)"
+            )
         player.action = text
 
     def enter_lobby(self) -> None:

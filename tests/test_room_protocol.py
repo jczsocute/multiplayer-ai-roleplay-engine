@@ -27,7 +27,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             connections.append(connection)
             self.assertIsNotNone(await sessions.join(f"user-{index}", connection))
         self.assertIsNone(await sessions.join("overflow", FakeConnection()))
-        with self.assertRaisesRegex(ValueError, "already connected"):
+        with self.assertRaisesRegex(ValueError, "昵称已有人使用"):
             await sessions.join("user-0", FakeConnection())
 
         await sessions.remove("user-0", connections[0])
