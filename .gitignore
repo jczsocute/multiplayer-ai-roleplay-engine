@@ -11,9 +11,11 @@ __pycache__/
 *.sqlite
 database/*.db
 
-# Runtime game instances
-games/*
-!games/.gitkeep
+# Runtime game instances and personal scenario content
+/games/
+/templates/*
+!/templates/default/
+!/templates/default/**
 
 # Logs
 logs/*

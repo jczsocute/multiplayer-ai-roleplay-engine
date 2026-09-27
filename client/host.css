@@ -15,18 +15,29 @@ Screen {
     scrollbar-gutter: stable;
 }
 
-#host-players {
+#host-presence {
     height: auto;
-    min-height: 8;
+    min-height: 3;
     border-top: solid $primary;
     padding: 0 1;
 }
 
-#host-processing {
+#host-collaboration {
     height: 3;
     content-align: center middle;
     border-top: solid $primary;
     border-bottom: solid $primary;
+}
+
+#host-draft-label, #host-command-label {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#host-draft {
+    height: 6;
+    border: tall $accent;
 }
 
 #host-command {

@@ -5,9 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from rich.console import Group
 from rich.panel import Panel
-from rich.rule import Rule
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -17,14 +15,9 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidURI
 
 try:
-    from client.protocol import parse_input
+    from client.display import room_message_text, to_yaml
 except ModuleNotFoundError:  # Supports: python client/terminal.py
-    from protocol import parse_input
-
-try:
-    from client.display import to_yaml
-except ModuleNotFoundError:  # Supports: python client/terminal.py
-    from display import to_yaml
+    from display import room_message_text, to_yaml
 
 
 STATUS_LABELS = {
@@ -41,6 +34,28 @@ PROCESSING_LABELS = {
     "NARRATION_GENERATING": "文段生成中",
 }
 
+PLAYER_DRAFT_HINT = "当前角色行动；也可配合 /chat 发送房间聊天"
+SPECTATOR_DRAFT_HINT = "房间聊天内容（使用 /chat 发送）"
+PLAYER_COMMAND_HINT = "/submit /cancel /pause /resume /status /chat /help /quit"
+SPECTATOR_COMMAND_HINT = "/chat /view A /view B /help /quit"
+
+PLAYER_HELP = """玩家命令：
+/submit  提交当前 Draft 作为角色行动
+/cancel  撤销提交并继续编辑
+/pause   暂停当前角色
+/resume  恢复当前角色
+/status  显示当前角色状态栏
+/chat    将当前 Draft 发送到房间聊天
+/help    显示本帮助
+/quit    退出客户端"""
+
+SPECTATOR_HELP = """观众命令：
+/chat    将当前 Draft 发送到房间聊天
+/view A  查看 Player A 历史
+/view B  查看 Player B 历史
+/help    显示本帮助
+/quit    退出客户端"""
+
 
 class GameApp(App):
     CSS_PATH = Path(__file__).with_name("tui.css")
@@ -56,39 +71,33 @@ class GameApp(App):
         self.nickname = nickname
         self.websocket = None
         self.role: str | None = None
+        self.view_role: str | None = None
         self.scenario = ""
         self.draft = ""
         self.round_number: int | None = None
         self.round_status = "LOBBY"
         self.draft_initialized = False
         self.draft_revision = 0
-        self.narration_rounds: set[int] = set()
         self.player_states: dict = {}
+        self.presence: list[dict] = []
         self.processing_stage: str | None = None
         self.processing_started = 0.0
 
     def compose(self) -> ComposeResult:
         yield Static("正在连接服务器…", id="identity")
-        yield RichLog(
-            id="history",
-            wrap=True,
-            markup=False,
-            auto_scroll=False,
-            min_width=20,
-        )
-        yield Static("等待两名玩家与 Host 完成角色分配…", id="lobby")
-        yield Static("A ■ 大厅等待        B ■ 大厅等待", id="collaboration")
+        yield RichLog(id="history", wrap=True, markup=False, auto_scroll=False)
+        yield Static("A ■ 无人扮演        B ■ 无人扮演", id="collaboration")
         yield Static("Draft：", id="draft-label")
         yield TextArea(
             "",
-            placeholder="当前回合行动 Draft",
+            placeholder=SPECTATOR_DRAFT_HINT,
             id="draft-editor",
             read_only=True,
             show_cursor=False,
         )
         yield Static("Command：", id="command-label")
         yield Input(
-            placeholder="/submit /cancel /pause /resume /status /retry /quit",
+            placeholder=SPECTATOR_COMMAND_HINT,
             id="command-input",
             disabled=True,
         )
@@ -116,19 +125,22 @@ class GameApp(App):
         message_type = message.get("type")
         if message_type == "joined":
             self.role = message.get("role")
+            self.view_role = message.get("view_role")
             self.scenario = message["scenario"]
             self._update_identity()
             self._enable_commands()
+            self._set_editor_status("LOBBY")
             return
-        if message_type == "lobby":
-            self._update_lobby(message)
+        if message_type == "identity_changed":
+            self.role = message.get("role")
+            self.view_role = message.get("view_role")
+            self._reset_local_view()
+            self._update_identity()
             return
         if message_type == "role_assigned":
-            self.role = message["assignments"].get(self.nickname)
-            self._update_identity()
-            self.query_one("#lobby").display = False
-            self._enable_commands()
-            await self._send({"type": "status"})
+            return
+        if message_type == "presence":
+            self.presence = message.get("users", [])
             return
         if message_type == "state":
             self._apply_round_state(message)
@@ -136,30 +148,24 @@ class GameApp(App):
         if message_type == "processing_stage":
             self._set_processing_stage(str(message.get("stage", "")))
             return
-        if message_type == "history":
-            self._load_history(message.get("messages", []))
+        if message_type == "role_view":
+            self._load_role_view(message)
             return
-        if message_type == "narration":
-            round_id = int(message["round"])
-            if round_id not in self.narration_rounds:
-                self.narration_rounds.add(round_id)
-                self._append_scene(message, f"第 {round_id} 回合")
-            await self._send({"type": "ack", "round_id": round_id})
+        if message_type == "role_round":
+            if message.get("role") == self.view_role:
+                self._append_live_round(message.get("entries", []), message.get("statusbar", {}))
             return
-        if message_type == "last_scene":
-            round_id = int(message["round"])
-            if round_id not in self.narration_rounds:
-                self.narration_rounds.add(round_id)
-                self._append_scene(message, "最近场景")
+        if message_type == "room_message":
+            self._append(room_message_text(message))
             return
         if message_type == "status":
             self._apply_status(message)
-            self._append_status(message)
+            self._append(self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"))
             return
         if message_type == "round_complete":
             self._append(Text(f"第 {message['round']} 回合完成。", style="dim"))
             return
-        if message_type == "system":
+        if message_type == "system":  # Legacy server compatibility.
             self._append(Text(f"[系统] {message.get('text', '')}", style="dim cyan"))
             return
         if message_type in ("error", "notice"):
@@ -186,8 +192,18 @@ class GameApp(App):
                 await self.websocket.close()
             self.exit()
             return
+        if command == "/help":
+            self._show_help()
+            return
+        if command == "/chat":
+            await self._chat_draft()
+            return
         if self.role is None:
-            self._append(Text("请等待 Host 完成角色分配。", style="yellow"))
+            parts = command.split()
+            if len(parts) == 2 and parts[0] == "/view" and parts[1].upper() in ("A", "B"):
+                await self._send({"type": "view", "role": parts[1].upper()})
+                return
+            self._append(Text("观众命令无效；输入 /help 查看可用命令。", style="yellow"))
             return
         if command == "/submit":
             await self._submit_draft()
@@ -195,9 +211,17 @@ class GameApp(App):
         if command == "/cancel":
             await self._cancel_submit()
             return
-        message = parse_input(command)
-        if message["type"] == "action":
-            self._append(Text("命令栏只接受以 / 开头的兼容命令。", style="yellow"))
+        commands = {
+            "/pause": {"type": "pause"},
+            "/resume": {"type": "resume"},
+            "/status": {"type": "status"},
+        }
+        message = commands.get(command)
+        if message is None:
+            self._append(Text(
+                "玩家命令无效；输入 /help 查看可用命令。",
+                style="yellow",
+            ))
             return
         if command == "/pause":
             await self._sync_draft_now()
@@ -206,7 +230,7 @@ class GameApp(App):
     @work(exclusive=True, group="draft-sync")
     async def sync_draft_later(self, revision: int) -> None:
         await asyncio.sleep(0.2)
-        if revision == self.draft_revision and self.round_status == "EDITING":
+        if revision == self.draft_revision and self.round_status == "EDITING" and self.role:
             await self._send({"type": "action", "text": self._draft_editor().text})
 
     async def _sync_draft_now(self) -> None:
@@ -214,6 +238,20 @@ class GameApp(App):
             self.draft_revision += 1
             self.draft = self._draft_editor().text
             await self._send({"type": "action", "text": self.draft})
+
+    async def _chat_draft(self) -> None:
+        editor = self._draft_editor()
+        if editor.read_only:
+            self._append(Text("当前 Draft 为只读，暂时不能发送房间聊天。", style="yellow"))
+            return
+        text = editor.text.strip()
+        if not text:
+            self._append(Text("Draft 不能为空。", style="yellow"))
+            return
+        await self._send({"type": "room_chat", "text": text})
+        self.draft_revision += 1
+        editor.load_text("")
+        self.draft = ""
 
     async def _submit_draft(self) -> None:
         if self.role is None or self.round_status != "EDITING":
@@ -237,40 +275,34 @@ class GameApp(App):
     def action_history_page_down(self) -> None:
         self.query_one("#history", RichLog).action_page_down()
 
-    def _update_lobby(self, message: dict) -> None:
-        participants = message.get("participants", [])
-        if message.get("assigned"):
-            self.query_one("#lobby").display = False
-            return
-        lobby = self.query_one("#lobby", Static)
-        lobby.display = True
-        descriptions = []
-        for participant in participants:
-            connected = "在线" if participant["connected"] else "离线"
-            descriptions.append(f"{participant['name']} · {connected}")
-        lobby.update(
-            "等待 Host 分配角色：" + "  |  ".join(descriptions)
-            if descriptions else "等待玩家加入…"
-        )
-        lobby_players = {
-            "A": {"status": "LOBBY"},
-            "B": {"status": "LOBBY"},
-        }
-        self._update_collaboration(lobby_players)
-
     def _update_identity(self) -> None:
-        role = f"Player {self.role}" if self.role else "等待角色分配"
+        identity = f"Player {self.role}" if self.role else "Spectator"
+        view = f"View: {self.view_role}" if self.view_role else "未选择角色视图"
         self.query_one("#identity", Static).update(
-            f"Scenario: {self.scenario}    昵称: {self.nickname}    角色: {role}"
+            f"Scenario: {self.scenario}    昵称: {self.nickname}    {identity}    {view}"
         )
+        self._update_input_hints()
+
+    def _update_input_hints(self) -> None:
+        if self.role:
+            draft_hint = PLAYER_DRAFT_HINT
+            command_hint = PLAYER_COMMAND_HINT
+        else:
+            draft_hint = SPECTATOR_DRAFT_HINT
+            command_hint = SPECTATOR_COMMAND_HINT
+        self._draft_editor().placeholder = draft_hint
+        self.query_one("#command-input", Input).placeholder = command_hint
+
+    def _show_help(self) -> None:
+        content = PLAYER_HELP if self.role else SPECTATOR_HELP
+        self._append(Panel(content, title="命令帮助", border_style="cyan"))
 
     def _enable_commands(self) -> None:
-        command_input = self.query_one("#command-input", Input)
-        command_input.disabled = False
+        self.query_one("#command-input", Input).disabled = False
 
     def _apply_round_state(self, message: dict) -> None:
         round_number = int(message["round"])
-        if self.round_number is not None and round_number > self.round_number:
+        if self.role and self.round_number is not None and round_number > self.round_number:
             self.draft_revision += 1
             self._draft_editor().load_text("")
             self.draft = ""
@@ -281,15 +313,17 @@ class GameApp(App):
         if stage in PROCESSING_LABELS:
             self._set_processing_stage(stage)
         elif not any(
-            (value.get("status") if isinstance(value, dict) else value) == "PROCESSING"
+            value.get("status") == "PROCESSING"
             for value in self.player_states.values()
+            if isinstance(value, dict)
         ):
             self.processing_stage = None
-        self._update_collaboration(message["players"])
+        self._update_collaboration(self.player_states)
         if self.role:
-            value = message["players"].get(self.role, {})
-            status = value.get("status", "LOBBY") if isinstance(value, dict) else value
-            self._set_editor_status(status)
+            value = self.player_states.get(self.role, {})
+            self._set_editor_status(value.get("status", "EDITING"))
+        else:
+            self._set_editor_status("LOBBY")
 
     def _apply_status(self, message: dict) -> None:
         self._apply_round_state({
@@ -297,22 +331,19 @@ class GameApp(App):
             "stage": message.get("stage", ""),
             "players": message["players"],
         })
-        if not self.draft_initialized or self.round_status != "EDITING":
-            draft = str(message.get("draft", ""))
-            if self._draft_editor().text != draft:
-                self.draft_revision += 1
-                self._draft_editor().load_text(draft)
-            self.draft = draft
-            self.draft_initialized = True
+        draft = str(message.get("draft", ""))
+        if self._draft_editor().text != draft:
+            self.draft_revision += 1
+            self._draft_editor().load_text(draft)
+        self.draft = draft
+        self.draft_initialized = True
 
     def _set_editor_status(self, status: str) -> None:
         self.round_status = status
+        editable = self.role is None or status == "EDITING"
         editor = self._draft_editor()
-        editable = status == "EDITING"
         editor.read_only = not editable
         editor.show_cursor = editable
-        if editable:
-            editor.focus()
 
     def _draft_editor(self) -> TextArea:
         return self.query_one("#draft-editor", TextArea)
@@ -320,11 +351,11 @@ class GameApp(App):
     def _update_collaboration(self, players: dict) -> None:
         line = Text()
         for index, role in enumerate(("A", "B")):
-            value = players.get(role, "LOBBY")
-            status = value.get("status", "LOBBY") if isinstance(value, dict) else value
-            connected = value.get("connected", True) if isinstance(value, dict) else True
-            if status != "LOBBY" and not connected:
-                label, color = "已离开", "grey50"
+            value = players.get(role, {})
+            status = value.get("status", "EDITING") if isinstance(value, dict) else value
+            connected = value.get("connected", False) if isinstance(value, dict) else False
+            if not connected:
+                label, color = "无人扮演", "grey50"
             elif status == "PROCESSING" and self.processing_stage in PROCESSING_LABELS:
                 elapsed = max(0, int(time.monotonic() - self.processing_started))
                 label = f"{PROCESSING_LABELS[self.processing_stage]} · {elapsed}s"
@@ -349,47 +380,72 @@ class GameApp(App):
         if self.processing_stage and self.player_states:
             self._update_collaboration(self.player_states)
 
-    def _load_history(self, messages: list[dict]) -> None:
+    def _reset_local_view(self) -> None:
+        self.query_one("#history", RichLog).clear()
+        self.draft_revision += 1
+        self._draft_editor().load_text("")
+        self.draft = ""
+        self.draft_initialized = False
+        self._set_editor_status("LOBBY")
+
+    def _load_role_view(self, message: dict) -> None:
+        self.view_role = message.get("role")
         history = self.query_one("#history", RichLog)
         history.clear()
-        self.narration_rounds.clear()
-        if not messages:
-            history.write(Text("故事尚未开始。", style="dim"), scroll_end=False)
-        for item in messages:
-            round_id = int(item["round"])
-            if item["role"] == "narrator":
-                self.narration_rounds.add(round_id)
-                title = f"第 {round_id} 回合 · Narration"
-            else:
-                title = f"第 {round_id} 回合 · 你的行动"
-            history.write(Panel(item["content"], title=title), scroll_end=False)
+        entries = message.get("history", [])
+        for item in entries:
+            if item.get("kind") != "statusbar":
+                self._write_role_entry(history, int(item["round"]), item)
+        if not any(item.get("kind") in ("action", "narration") for item in entries):
+            history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
+        history.write(
+            self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
+            scroll_end=False,
+        )
         history.scroll_end(animate=False)
+        if "draft" in message:
+            self.draft_revision += 1
+            self._draft_editor().load_text(str(message["draft"]))
+            self.draft = str(message["draft"])
+            self.draft_initialized = True
+        self._update_identity()
 
-    def _append_scene(self, message: dict, title: str) -> None:
-        statusbar = to_yaml(message.get("statusbar", {}))
-        public = to_yaml(message.get("public_information", {}))
-        content = Group(
-            Text(message.get("text", "")),
-            Rule("角色状态栏"),
-            Text(statusbar),
-            Rule("公共世界信息"),
-            Text(public),
+    def _append_live_round(self, entries: list[dict], statusbar) -> None:
+        history = self.query_one("#history", RichLog)
+        at_bottom = history.is_vertical_scroll_end
+        for item in entries:
+            if item.get("kind") == "narration":
+                history.write(
+                    Panel(str(item.get("content", "")), title="本轮输出"),
+                    scroll_end=at_bottom,
+                )
+        history.write(
+            self._statusbar_panel(statusbar, "本轮状态栏"),
+            scroll_end=at_bottom,
         )
-        self._append(Panel(content, title=title, border_style="cyan"))
 
-    def _append_status(self, message: dict) -> None:
-        players = "\n".join(
-            f"{role}: {value.get('status', value) if isinstance(value, dict) else value}"
-            for role, value in message["players"].items()
-        )
-        content = Group(
-            Text(players),
-            Rule("角色状态栏"),
-            Text(to_yaml(message.get("statusbar", {}))),
-            Rule("公共世界信息"),
-            Text(to_yaml(message.get("public_information", {}))),
-        )
-        self._append(Panel(content, title="当前状态", border_style="green"))
+    @staticmethod
+    def _write_role_entry(
+        history: RichLog,
+        round_id: int,
+        item: dict,
+        *,
+        scroll_end: bool = False,
+    ) -> None:
+        kind = item.get("kind")
+        titles = {
+            "action": f"第 {round_id} 轮行动",
+            "narration": f"第 {round_id} 轮输出",
+        }
+        if kind in titles:
+            history.write(
+                Panel(str(item.get("content", "")), title=titles[kind]),
+                scroll_end=scroll_end,
+            )
+
+    @staticmethod
+    def _statusbar_panel(value, title: str) -> Panel:
+        return Panel(to_yaml(value), title=title, border_style="green")
 
     def _append(self, renderable) -> None:
         history = self.query_one("#history", RichLog)
@@ -402,6 +458,7 @@ class GameApp(App):
             return
         await self.websocket.send(json.dumps(message, ensure_ascii=False))
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI RP Engine Textual client")
     parser.add_argument(
@@ -409,7 +466,7 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("SERVER_URI", "ws://127.0.0.1:8765"),
         help="WebSocket server URI",
     )
-    parser.add_argument("--name", help="nickname used to reconnect to this game")
+    parser.add_argument("--name", help="nickname for this connection")
     return parser.parse_args()
 
 

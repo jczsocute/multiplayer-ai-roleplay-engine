@@ -29,11 +29,7 @@ class Narrator:
         player_statusbar: object,
         chat_history: list[dict[str, str]],
     ) -> dict:
-        input_text = f"""# 玩家
-
-玩家 {player_id}
-
-# 角色设定
+        input_text = f"""# 角色设定
 
 {self.loader.character(player_id)}
 
@@ -41,15 +37,15 @@ class Narrator:
 
 {self._format(public_world_info)}
 
-# 玩家私有可见信息
+# 角色可见信息
 
 {self._format(player_view)}
 
-# 玩家当前状态栏
+# 角色当前状态
 
 {self._format(player_statusbar)}
 
-# 玩家历史聊天
+# 历史剧情
 
 {json.dumps(chat_history, ensure_ascii=False)}
 """

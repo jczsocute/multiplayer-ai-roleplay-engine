@@ -20,6 +20,16 @@ class PromptLoader:
             raise ValueError(f"unknown player: {player_id}")
         return self.text(f"characters/{filename}")
 
+    def character_name(self, player_id: str) -> str:
+        for line in self.character(player_id).splitlines():
+            stripped = line.strip()
+            for prefix in ("姓名：", "姓名:", "Name:"):
+                if stripped.startswith(prefix):
+                    name = stripped[len(prefix):].strip()
+                    if name:
+                        return name
+        return f"Player {player_id}"
+
     def statusbar(self, player_id: str) -> dict:
         filename = {"A": "player_a.json", "B": "player_b.json"}.get(player_id)
         if filename is None:

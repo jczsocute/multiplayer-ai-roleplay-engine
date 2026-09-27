@@ -3,13 +3,15 @@ COMMANDS = {
     "/cancel": {"type": "cancel_submit"},
     "/pause": {"type": "pause"},
     "/resume": {"type": "resume"},
-    "/retry": {"type": "retry_narration"},
     "/status": {"type": "status"},
 }
 
 
 def parse_input(text: str) -> dict:
     command = text.strip()
+    parts = command.split()
+    if len(parts) == 2 and parts[0] == "/view" and parts[1].upper() in ("A", "B"):
+        return {"type": "view", "role": parts[1].upper()}
     if command in COMMANDS:
         return COMMANDS[command]
     return {"type": "action", "text": command}
@@ -25,6 +27,17 @@ def format_message(message: dict) -> str:
         return f"Error: {message.get('detail', 'unknown error')}"
     if message_type == "round_complete":
         return f"Round {message['round']} completed."
+    if message_type == "room_message":
+        kind = message.get("kind")
+        if kind == "system":
+            prefix = "系统"
+        elif kind == "host":
+            prefix = "管理员"
+        elif kind == "player":
+            prefix = f"{message.get('sender')} ({message.get('character_name')})"
+        else:
+            prefix = str(message.get("sender", ""))
+        return f"[{prefix}] {message.get('text', '')}"
     if message_type == "narration":
         prefix = "Last scene:\n\n" if message.get("last_scene") else ""
         return prefix + message.get("text", "")
@@ -44,7 +57,6 @@ def format_message(message: dict) -> str:
             f"Current round:\n{message['round']}\n\n"
             f"Player status:\n{players}\n\n"
             f"Character statusbar:\n{message.get('statusbar', {})}\n\n"
-            f"Public information:\n{message.get('public_information', {})}\n\n"
             "===================="
         )
     if message_type == "state":

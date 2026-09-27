@@ -15,13 +15,6 @@ Screen {
     scrollbar-gutter: stable;
 }
 
-#lobby {
-    display: none;
-    height: auto;
-    border: round $secondary;
-    padding: 0 1;
-}
-
 #collaboration {
     height: 3;
     content-align: center middle;

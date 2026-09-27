@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS player_views (
     FOREIGN KEY (round_id) REFERENCES rounds(round_number)
 );
 
+CREATE TABLE IF NOT EXISTS player_statusbars (
+    round_id INTEGER NOT NULL,
+    player_id TEXT NOT NULL CHECK (player_id IN ('A', 'B')),
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (round_id, player_id),
+    FOREIGN KEY (round_id) REFERENCES rounds(round_number)
+);
+
 CREATE TABLE IF NOT EXISTS public_world_info (
     round_id INTEGER PRIMARY KEY,
     content TEXT NOT NULL,
@@ -61,13 +70,6 @@ CREATE TABLE IF NOT EXISTS public_world_info (
     FOREIGN KEY (round_id) REFERENCES rounds(round_number)
 );
 
-CREATE TABLE IF NOT EXISTS participants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    is_host INTEGER NOT NULL DEFAULT 0,
-    role TEXT UNIQUE CHECK (role IN ('A', 'B') OR role IS NULL),
-    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
 """
 
 
@@ -112,14 +114,11 @@ class Database:
     async def get_latest_world_update(self) -> dict | None:
         return await asyncio.to_thread(self._get_latest_world_update_sync)
 
-    async def get_participants(self) -> list[dict]:
-        return await asyncio.to_thread(self._get_participants_sync)
+    async def get_role_history(self, player_id: str) -> list[dict]:
+        return await asyncio.to_thread(self._get_role_history_sync, player_id)
 
-    async def register_participant(self, name: str) -> None:
-        await asyncio.to_thread(self._register_participant_sync, name)
-
-    async def save_role_assignment(self, assignments: dict[str, str]) -> None:
-        await asyncio.to_thread(self._save_role_assignment_sync, assignments)
+    async def get_latest_player_view(self, player_id: str):
+        return await asyncio.to_thread(self._get_latest_player_view_sync, player_id)
 
     async def get_world_state(self) -> str:
         return await asyncio.to_thread(self._get_world_state_sync)
@@ -219,6 +218,8 @@ class Database:
             connection.execute(
                 "ALTER TABLE players ADD COLUMN statusbar_content TEXT NOT NULL DEFAULT '{}'"
             )
+        # Real-world users and role bindings are runtime-only from this version on.
+        connection.execute("DROP TABLE IF EXISTS participants")
 
     def _save_player_sync(self, player_id: str, status: str, action: str) -> None:
         with self._connect() as connection:
@@ -279,12 +280,8 @@ class Database:
             statusbar = connection.execute(
                 "SELECT statusbar_content FROM players WHERE player_id = ?", (player_id,)
             ).fetchone()
-            public = connection.execute(
-                "SELECT content FROM public_world_info ORDER BY round_id DESC LIMIT 1"
-            ).fetchone()
         return {
             "statusbar": self._parse_content(statusbar[0]) if statusbar else {},
-            "public_information": self._parse_content(public[0]) if public else {},
         }
 
     @staticmethod
@@ -339,27 +336,59 @@ class Database:
             },
         }
 
-    def _get_participants_sync(self) -> list[dict]:
+    def _get_role_history_sync(self, player_id: str) -> list[dict]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT name, role FROM participants ORDER BY id"
+            messages = connection.execute(
+                """SELECT chat_messages.round_number, chat_messages.role,
+                          chat_messages.content
+                   FROM chat_messages
+                   JOIN rounds ON rounds.round_number = chat_messages.round_number
+                   WHERE chat_messages.player_id = ? AND rounds.status = 'COMPLETED'
+                   ORDER BY chat_messages.round_number, chat_messages.id""",
+                (player_id,),
             ).fetchall()
-        return [{"name": name, "role": role} for name, role in rows]
+            statusbars = dict(connection.execute(
+                """SELECT player_statusbars.round_id, player_statusbars.content
+                   FROM player_statusbars
+                   JOIN rounds ON rounds.round_number = player_statusbars.round_id
+                   WHERE player_statusbars.player_id = ? AND rounds.status = 'COMPLETED'
+                   ORDER BY player_statusbars.round_id""",
+                (player_id,),
+            ).fetchall())
+        by_round: dict[int, dict[str, str]] = {}
+        for round_id, role, content in messages:
+            by_round.setdefault(round_id, {})[role] = content
+        history = []
+        for round_id in sorted(set(by_round) | set(statusbars)):
+            round_messages = by_round.get(round_id, {})
+            if "player" in round_messages:
+                history.append({
+                    "round": round_id,
+                    "kind": "action",
+                    "content": round_messages["player"],
+                })
+            if "narrator" in round_messages:
+                history.append({
+                    "round": round_id,
+                    "kind": "narration",
+                    "content": round_messages["narrator"],
+                })
+            if round_id in statusbars:
+                history.append({
+                    "round": round_id,
+                    "kind": "statusbar",
+                    "content": self._parse_content(statusbars[round_id]),
+                })
+        return history
 
-    def _register_participant_sync(self, name: str) -> None:
+    def _get_latest_player_view_sync(self, player_id: str):
         with self._connect() as connection:
-            connection.execute(
-                "INSERT OR IGNORE INTO participants (name) VALUES (?)",
-                (name,),
-            )
-
-    def _save_role_assignment_sync(self, assignments: dict[str, str]) -> None:
-        with self._connect() as connection:
-            connection.execute("UPDATE participants SET role = NULL")
-            connection.executemany(
-                "UPDATE participants SET role = ? WHERE name = ?",
-                ((role, name) for name, role in assignments.items()),
-            )
+            row = connection.execute(
+                """SELECT view_content FROM player_views
+                   WHERE player_id = ? ORDER BY round_id DESC LIMIT 1""",
+                (player_id,),
+            ).fetchone()
+        return self._parse_content(row[0]) if row else None
 
     def _current_round_sync(self) -> int:
         with self._connect() as connection:
@@ -494,6 +523,21 @@ class Database:
                 "UPDATE players SET statusbar_content = ? WHERE player_id = ?",
                 (
                     (self._as_text(result["player_statusbar"][player_id]), player_id)
+                    for player_id in ("A", "B")
+                ),
+            )
+            connection.executemany(
+                """INSERT INTO player_statusbars (round_id, player_id, content)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(round_id, player_id) DO UPDATE SET
+                       content = excluded.content,
+                       timestamp = CURRENT_TIMESTAMP""",
+                (
+                    (
+                        completed.round_number,
+                        player_id,
+                        self._as_text(result["player_statusbar"][player_id]),
+                    )
                     for player_id in ("A", "B")
                 ),
             )

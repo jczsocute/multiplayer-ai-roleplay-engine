@@ -99,6 +99,16 @@ Store:
 - chat history
 - rounds
 
+## Repository Content Boundaries
+
+Do not commit anything under `games/`. Game instances contain runtime state and
+personal play content.
+
+Under `templates/`, commit only `templates/default/`. Every other scenario
+template is personal creative content and must remain untracked.
+
+Do not force-add ignored game instances or personal scenario templates.
+
 ## Coding Style
 
 Prefer:

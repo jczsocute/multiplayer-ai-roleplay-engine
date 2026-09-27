@@ -17,41 +17,41 @@ class WorldUpdater:
         self.max_tokens = max_tokens
 
     async def update(self, current_world_state: str, action_a: str, action_b: str) -> dict:
-        input_text = f"""# 世界设定
-
-{self.loader.text("world/world.md")}
-
-# AI 创作规范
+        input_text = f"""# 创作规范
 
 {self.loader.text("prompts/ai_guidelines.md")}
 
-# 玩家 A 设定
+# 世界设定
+
+{self.loader.text("world/world.md")}
+
+# 角色 A 设定
 
 {self.loader.character("A")}
 
-# 玩家 B 设定
-
-{self.loader.character("B")}
-
-# 玩家 A 状态栏模板
+# 角色 A 状态
 
 {json.dumps(self.loader.statusbar("A"), ensure_ascii=False, indent=2)}
 
-# 玩家 B 状态栏模板
+# 角色 B 设定
+
+{self.loader.character("B")}
+
+# 角色 B 状态
 
 {json.dumps(self.loader.statusbar("B"), ensure_ascii=False, indent=2)}
 
-# 当前客观世界状态
+# 当前世界
 
 {self._format(current_world_state)}
 
-# 玩家提交的行动
+# 本轮角色行动
 
-## 玩家 A
+## 角色 A
 
 {action_a}
 
-## 玩家 B
+## 角色 B
 
 {action_b}
 

@@ -1,7 +1,7 @@
 import unittest
 
 from client.host import HostApp
-from textual.widgets import Input
+from textual.widgets import Input, RichLog, TextArea
 
 
 class TestHostApp(HostApp):
@@ -17,6 +17,29 @@ class TestHostApp(HostApp):
 
 
 class HostTuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_role_view_uses_history_area_for_current_statusbar(self) -> None:
+        app = TestHostApp()
+        async with app.run_test(size=(100, 36)):
+            await app._handle_message({
+                "type": "role_view",
+                "role": "B",
+                "history": [
+                    {"round": 1, "kind": "action", "content": "观察窗外"},
+                    {"round": 1, "kind": "narration", "content": "雨幕遮住远处"},
+                    {"round": 1, "kind": "statusbar", "content": {"旧状态": "忽略"}},
+                ],
+                "statusbar": {"法力": 40},
+            })
+
+            rendered = "\n".join(
+                line.text for line in app.query_one("#host-history", RichLog).lines
+            )
+            self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
+            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("当前状态栏"))
+            self.assertIn("法力", rendered)
+            self.assertNotIn("旧状态", rendered)
+            self.assertEqual(str(app._statusbar_panel({}, "状态栏").border_style), "green")
+
     async def test_assign_command_maps_two_player_names(self) -> None:
         app = TestHostApp()
         async with app.run_test(size=(100, 32)) as pilot:
@@ -33,6 +56,43 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
                 "player_b": "Alice",
             }])
             self.assertEqual(command.value, "")
+
+    async def test_host_chat_view_and_retry_commands(self) -> None:
+        app = TestHostApp()
+        async with app.run_test(size=(100, 36)) as pilot:
+            draft = app.query_one("#host-draft", TextArea)
+            command = app.query_one("#host-command", Input)
+            draft.load_text("稍等，我重新分配。")
+            command.value = "/chat"
+            command.focus()
+            await pilot.press("enter")
+            command.value = "/view A"
+            await pilot.press("enter")
+            command.value = "/retry"
+            await pilot.press("enter")
+
+            self.assertEqual(app.sent, [
+                {"type": "room_chat", "text": "稍等，我重新分配。"},
+                {"type": "view", "view": "A"},
+                {"type": "retry_ai"},
+            ])
+            self.assertEqual(draft.text, "")
+
+    async def test_host_help_is_local(self) -> None:
+        app = TestHostApp()
+        async with app.run_test(size=(100, 32)) as pilot:
+            command = app.query_one("#host-command", Input)
+            self.assertIn("/help", command.placeholder)
+            command.value = "/help"
+            command.focus()
+            await pilot.press("enter")
+
+            self.assertEqual(app.sent, [])
+            history = "\n".join(
+                line.text for line in app.query_one("#host-history", RichLog).lines
+            )
+            self.assertIn("Host 命令", history)
+            self.assertIn("/assign", history)
 
 
 if __name__ == "__main__":

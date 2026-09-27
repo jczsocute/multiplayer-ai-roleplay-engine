@@ -12,6 +12,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_initialize_and_finish_round(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "game.db"
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    "CREATE TABLE participants (id INTEGER PRIMARY KEY, name TEXT)"
+                )
+                connection.execute("INSERT INTO participants (name) VALUES ('legacy')")
             database = Database(str(path))
             await database.initialize()
             completed = CompletedRound(1, {"A": "left", "B": "right"})
@@ -40,6 +45,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(latest["round"], 1)
             self.assertEqual(latest["result"]["world_state"], {"gate": "open"})
             self.assertEqual(latest["result"]["player_statusbar"]["B"], {"hp": 90})
+            self.assertEqual(
+                [item["kind"] for item in await database.get_role_history("A")],
+                ["action", "narration", "statusbar"],
+            )
 
             with sqlite3.connect(path) as connection:
                 tables = {
@@ -56,9 +65,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                         "world_state",
                         "player_views",
                         "public_world_info",
+                        "player_statusbars",
                     }
                     <= tables
                 )
+                self.assertNotIn("participants", tables)
                 self.assertEqual(
                     connection.execute(
                         "SELECT status FROM rounds WHERE round_number = 1"

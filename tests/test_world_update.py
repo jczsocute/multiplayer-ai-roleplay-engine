@@ -216,11 +216,23 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 {"A": {"hp": 100}, "B": {"hp": 100}},
             )
             self.assertEqual(
-                [m["text"] for m in player_a_socket.messages if m["type"] == "narration"],
+                [
+                    entry["content"]
+                    for message in player_a_socket.messages
+                    if message["type"] == "role_round"
+                    for entry in message["entries"]
+                    if entry["kind"] == "narration"
+                ],
                 ["Narration for A."],
             )
             self.assertEqual(
-                [m["text"] for m in player_b_socket.messages if m["type"] == "narration"],
+                [
+                    entry["content"]
+                    for message in player_b_socket.messages
+                    if message["type"] == "role_round"
+                    for entry in message["entries"]
+                    if entry["kind"] == "narration"
+                ],
                 ["Narration for B."],
             )
             host_updates = [
@@ -315,8 +327,10 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 '{"gate": "open"}',
             )
 
-            await server._handle_command(
-                "A", websocket, json.dumps({"type": "retry_narration"})
+            host = FakeWebSocket()
+            await server.sessions.join_host(host)
+            await server._handle_host_command(
+                host, json.dumps({"type": "retry_ai"})
             )
 
             self.assertEqual(len(updater.calls), 1)

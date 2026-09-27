@@ -15,7 +15,7 @@ from server.llm.narrator import Narrator
 from server.llm.player_view import PlayerViewGenerator
 from server.llm.prompt_loader import PromptLoader
 from server.llm.world_update import WorldUpdater
-from server.models import CompletedRound, RoundStage
+from server.models import CompletedRound, PlayerStatus, RoundStage
 from server.round_manager import RoundError, RoundManager
 from server.scenario_manager import ScenarioManager
 from server.session import Sessions
@@ -33,21 +33,20 @@ class GameServer:
         narrator: Narrator,
         round_number: int = 1,
         scenario_name: str = "default",
-        participants: list[dict] | None = None,
+        character_names: dict[str, str] | None = None,
     ) -> None:
         self.database = database
         self.world_updater = world_updater
         self.player_views = player_views
         self.narrator = narrator
         self.rounds = RoundManager(round_number)
-        self.sessions = Sessions(participants)
-        if participants is not None and not self.sessions.roles_assigned:
-            self.rounds.enter_lobby()
+        self.sessions = Sessions(max_users=100)
         self.command_lock = asyncio.Lock()
         self.scenario_name = scenario_name
+        self.character_names = character_names or {"A": "Player A", "B": "Player B"}
 
     async def handler(self, websocket: ServerConnection) -> None:
-        participant_name: str | None = None
+        user_name: str | None = None
         try:
             registration = await asyncio.wait_for(websocket.recv(), timeout=15)
             message = self._decode(registration)
@@ -59,64 +58,44 @@ class GameServer:
                 await websocket.close(code=1008)
                 return
 
-            joined = await self.sessions.join(str(message.get("name", "")), websocket)
-            if joined is None:
-                await self._send_error(websocket, "game already has two connected players")
+            user = await self.sessions.join(str(message.get("name", "")), websocket)
+            if user is None:
+                await self._send_error(websocket, "room already has 100 connected users")
                 await websocket.close(code=1008)
                 return
-            participant, is_new = joined
-            participant_name = participant.name
-            if is_new:
-                await self.database.register_participant(participant.name)
+            user_name = user.name
 
-            logger.info("Participant %s connected", participant_name)
+            logger.info("User %s connected", user_name)
             await websocket.send(json.dumps({
                 "type": "joined",
-                "name": participant.name,
-                "role": participant.role,
+                "name": user.name,
+                "role": None,
+                "view_role": None,
                 "scenario": self.scenario_name,
             }, ensure_ascii=False))
-            await self._broadcast_lobby()
+            await self._broadcast_presence()
             await self._broadcast_state()
-            if participant.role:
-                await self._send_history(participant.role, websocket)
-                replayed = await self._replay_narrations(participant.role, websocket)
-                if replayed == 0:
-                    latest = await self.database.get_latest_narration(participant.role)
-                    if latest:
-                        display = await self.database.get_player_display(participant.role)
-                        await websocket.send(json.dumps({
-                            "type": "last_scene", **latest, **display
-                        }, ensure_ascii=False))
-                await self._send_status(participant_name, websocket)
-                if not is_new:
-                    await self.sessions.broadcast({
-                        "type": "system",
-                        "event": "reconnected",
-                        "name": participant.name,
-                        "text": f"{participant.name} 已重新连接。",
-                    })
+            await self._broadcast_room_message(
+                "system", f"{user.name} 已加入房间。"
+            )
 
             async for raw_message in websocket:
-                await self._handle_command(participant_name, websocket, raw_message)
+                await self._handle_command(user_name, websocket, raw_message)
         except (ConnectionClosed, asyncio.TimeoutError):
             pass
         except (ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
         finally:
-            if participant_name is not None:
-                participant = self.sessions.participants[participant_name]
-                await self.sessions.remove(participant_name, websocket)
-                logger.info("Participant %s disconnected", participant_name)
-                await self._broadcast_lobby()
-                await self._broadcast_state()
-                if participant.role:
-                    await self.sessions.broadcast({
-                        "type": "system",
-                        "event": "left",
-                        "name": participant.name,
-                        "text": f"{participant.name} 已离开。",
-                    })
+            if user_name is not None:
+                removed = await self.sessions.remove(user_name, websocket)
+                if removed is not None:
+                    logger.info("User %s disconnected", user_name)
+                    await self._broadcast_presence()
+                    await self._broadcast_state()
+                    text = f"{removed.name} 已离开房间。"
+                    if removed.role:
+                        text += f" Player {removed.role} 当前无人扮演。"
+                    await self._broadcast_room_message("system", text)
 
     async def _serve_host(self, websocket: ServerConnection) -> None:
         if not self._is_local_host(websocket):
@@ -133,7 +112,7 @@ class GameServer:
                 "scenario": self.scenario_name,
             }, ensure_ascii=False))
             await websocket.send(json.dumps(
-                await self.sessions.lobby_snapshot(), ensure_ascii=False
+                await self.sessions.presence_snapshot(), ensure_ascii=False
             ))
             await websocket.send(json.dumps(
                 await self._round_snapshot(), ensure_ascii=False
@@ -154,60 +133,73 @@ class GameServer:
     ) -> None:
         try:
             message = self._decode(raw_message)
-            if message.get("type") != "assign_roles":
+            command = message.get("type")
+            if command == "room_chat":
+                await self._send_room_chat("host", None, str(message.get("text", "")))
+                return
+            if command == "view":
+                view = str(message.get("view", ""))
+                await self.sessions.set_host_view(view)
+                if view == "world":
+                    latest = await self.database.get_latest_world_update()
+                    await websocket.send(json.dumps({
+                        "type": "world_view",
+                        "result": latest["result"] if latest else {},
+                        "round": latest["round"] if latest else None,
+                    }, ensure_ascii=False))
+                else:
+                    await self._send_role_view(
+                        websocket, view, include_current_view=True
+                    )
+                return
+            if command == "status":
+                await websocket.send(json.dumps(await self.sessions.presence_snapshot(), ensure_ascii=False))
+                await websocket.send(json.dumps(await self._round_snapshot(), ensure_ascii=False))
+                return
+            if command == "retry_ai":
+                if not self.rounds.is_processing():
+                    raise RoundError("there is no AI stage to retry")
+                await self.recover_round()
+                return
+            if command != "assign_roles":
                 raise ValueError("unknown host command")
             async with self.command_lock:
-                assignments = await self.sessions.assign_roles(
+                await self._assign_roles(
                     str(message.get("player_a", "")),
                     str(message.get("player_b", "")),
                 )
-                await self.database.save_role_assignment(assignments)
-                self.rounds.activate_lobby()
-                for role, player in self.rounds.players.items():
-                    await self.database.save_player(role, player.status, player.action)
-                await self._broadcast_lobby()
-                role_message = {"type": "role_assigned", "assignments": assignments}
-                await self.sessions.broadcast(role_message)
-                await self.sessions.send_host(role_message)
-                await self._broadcast_state()
         except (RoundError, ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
 
     async def _handle_command(
-        self, participant_name: str, websocket: ServerConnection, raw_message: str
+        self, user_name: str, websocket: ServerConnection, raw_message: str
     ) -> None:
         try:
             message = self._decode(raw_message)
             command = message.get("type")
             completed = None
             async with self.command_lock:
-                player_id = await self.sessions.role_for(participant_name)
-                if player_id is None:
-                    raise RoundError("wait for the host to assign Player A and Player B")
-                if command == "history":
-                    await websocket.send(json.dumps({
-                        "type": "notice",
-                        "text": "历史记录可直接在上方区域滚动查看。",
-                    }, ensure_ascii=False))
-                    return
-                if command == "status":
-                    await self._send_status(participant_name, websocket)
-                    return
-                if command == "ack":
-                    round_id = message.get("round_id")
-                    if isinstance(round_id, bool) or not isinstance(round_id, int) or round_id < 1:
-                        raise RoundError("ack round_id must be a positive integer")
-                    if not await self.database.acknowledge_narration(player_id, round_id):
-                        raise RoundError("cannot acknowledge an unknown narration")
-                    self.rounds.players[player_id].last_ack_round = max(
-                        self.rounds.players[player_id].last_ack_round, round_id
+                player_id = await self.sessions.role_for(user_name)
+                if command == "room_chat":
+                    kind = "player" if player_id else "spectator"
+                    await self._send_room_chat(
+                        kind, user_name, str(message.get("text", "")), player_id
                     )
                     return
-                if command in ("retry_views", "retry_narration"):
-                    if not self.rounds.is_processing():
-                        raise RoundError("there is no AI stage to retry")
-                    await self.recover_round()
+                if command == "view":
+                    if player_id is not None:
+                        raise RoundError("players cannot switch role views")
+                    role = str(message.get("role", "")).upper()
+                    await self.sessions.set_view(user_name, role)
+                    await self._send_role_view(websocket, role)
                     return
+                if player_id is None:
+                    raise RoundError("spectators may only use /chat, /view A, /view B, and /quit")
+                if command == "status":
+                    await self._send_status(user_name, websocket)
+                    return
+                if command in ("retry_views", "retry_narration"):
+                    raise RoundError("only Host can retry AI stages")
                 if command == "action":
                     self.rounds.set_action(player_id, str(message.get("text", "")))
                 elif command == "submit":
@@ -216,8 +208,14 @@ class GameServer:
                     self.rounds.cancel_submit(player_id)
                 elif command == "pause":
                     self.rounds.pause(player_id)
+                    await self._broadcast_room_message(
+                        "system", f"Player {player_id} 已暂停。"
+                    )
                 elif command == "resume":
                     self.rounds.resume(player_id)
+                    await self._broadcast_room_message(
+                        "system", f"Player {player_id} 已恢复。"
+                    )
                 else:
                     raise RoundError(f"unknown command: {command}")
 
@@ -234,6 +232,124 @@ class GameServer:
         except (RoundError, ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
 
+    async def _assign_roles(self, player_a: str, player_b: str) -> None:
+        if self.rounds.is_processing():
+            raise RoundError("roles cannot be reassigned while AI processing is active")
+        before = await self.sessions.role_assignments()
+        for role, name in before.items():
+            if name and self.rounds.players[role].status != PlayerStatus.PAUSED:
+                raise RoundError(
+                    "reassign requires each currently occupied role to be PAUSED or empty"
+                )
+
+        assignments = await self.sessions.assign_roles(player_a, player_b)
+        after = await self.sessions.role_assignments()
+        changed_roles = [
+            role for role in ("A", "B") if before.get(role) != after.get(role)
+        ]
+        for role in changed_roles:
+            player = self.rounds.players[role]
+            player.status = PlayerStatus.EDITING
+            player.action = ""
+            await self.database.save_player(role, player.status, player.action)
+
+        changed_names = {
+            name for name in set(before.values()) | set(after.values())
+            if name and next(
+                (role for role, current in before.items() if current == name), None
+            ) != next((role for role, current in after.items() if current == name), None)
+        }
+        role_message = {
+            "type": "role_assigned",
+            "assignments": assignments,
+            "changed_users": sorted(changed_names),
+        }
+        await self.sessions.broadcast(role_message)
+        await self.sessions.send_host(role_message)
+
+        for name in changed_names:
+            user = self.sessions.users.get(name)
+            if user is None:
+                continue
+            await self.sessions.send_user(name, {
+                "type": "identity_changed",
+                "role": user.role,
+                "view_role": user.view_role,
+                "reset": True,
+            })
+            if user.view_role:
+                await self._send_role_view(
+                    user.websocket,
+                    user.view_role,
+                    include_draft=user.role is not None,
+                    include_current_view=user.role is not None,
+                )
+
+        await self._broadcast_presence()
+        await self._broadcast_state()
+        await self._broadcast_room_message(
+            "system",
+            f"Host 已完成角色分配：{player_a} → A，{player_b} → B。",
+        )
+
+    async def _send_role_view(
+        self,
+        websocket: ServerConnection,
+        role: str,
+        *,
+        include_draft: bool = False,
+        include_current_view: bool = False,
+    ) -> None:
+        if role not in ("A", "B"):
+            raise RoundError("role view must be A or B")
+        display = await self.database.get_player_display(role)
+        message = {
+            "type": "role_view",
+            "role": role,
+            "character_name": self.character_names[role],
+            "history": await self.database.get_role_history(role),
+            "statusbar": display["statusbar"],
+            "reset": True,
+        }
+        if include_current_view:
+            message["current_view"] = await self.database.get_latest_player_view(role)
+        if include_draft:
+            message["draft"] = self.rounds.players[role].action
+        await websocket.send(json.dumps(message, ensure_ascii=False))
+
+    async def _send_room_chat(
+        self,
+        kind: str,
+        sender: str | None,
+        text: str,
+        role: str | None = None,
+    ) -> None:
+        text = text.strip()
+        if not text:
+            raise RoundError("chat message cannot be empty")
+        if len(text) > 4000:
+            raise RoundError("chat message is too long")
+        # Room Plane is broadcast-only; never write this text to story chat_messages.
+        await self._broadcast_room_message(kind, text, sender, role)
+
+    async def _broadcast_room_message(
+        self,
+        kind: str,
+        text: str,
+        sender: str | None = None,
+        role: str | None = None,
+    ) -> None:
+        message = {
+            "type": "room_message",
+            "kind": kind,
+            "sender": sender,
+            "role": role,
+            "character_name": self.character_names.get(role) if role else None,
+            "text": text,
+        }
+        await self.sessions.broadcast(message)
+        await self.sessions.send_host(message)
+
     async def _process_round(self, completed: CompletedRound) -> None:
         try:
             await self._set_stage(RoundStage.WORLD_UPDATING)
@@ -244,7 +360,7 @@ class GameServer:
                 action_b=completed.actions["B"],
             )
             await self.database.save_world_update(completed, world_result)
-            await self.sessions.send_host({
+            await self.sessions.send_host_view("world", {
                 "type": "world_update",
                 "round": completed.round_number,
                 "result": world_result,
@@ -285,7 +401,7 @@ class GameServer:
                 logger.error("Player view recovery failed for round %s", completed.round_number)
                 await self._broadcast_message({
                     "type": "error",
-                    "detail": "player view generation failed; use /retry",
+                    "detail": "player view generation failed; Host can use /retry",
                 })
                 return
         await self._set_stage(RoundStage.VIEW_DONE)
@@ -334,7 +450,7 @@ class GameServer:
             )
             await self._broadcast_message({
                 "type": "error",
-                "detail": "narration generation failed; use /retry",
+                "detail": "narration generation failed; Host can use /retry",
             })
             return
 
@@ -343,13 +459,27 @@ class GameServer:
         self.rounds.set_stage(RoundStage.FINISHED)
         for player_id, narration in data["narrations"].items():
             display = await self.database.get_player_display(player_id)
-            await self.sessions.send(
+            await self.sessions.send_viewers(
                 player_id,
                 {
-                    "type": "narration",
+                    "type": "role_round",
+                    "role": player_id,
                     "round": completed.round_number,
-                    **narration,
-                    **display,
+                    "entries": [
+                        {
+                            "kind": "action",
+                            "content": completed.actions[player_id],
+                        },
+                        {
+                            "kind": "narration",
+                            "content": narration["text"],
+                        },
+                        {
+                            "kind": "statusbar",
+                            "content": display["statusbar"],
+                        },
+                    ],
+                    "statusbar": display["statusbar"],
                 },
             )
         await self.sessions.broadcast(
@@ -394,26 +524,10 @@ class GameServer:
         await self.sessions.broadcast(message)
         await self.sessions.send_host(message)
 
-    async def _replay_narrations(
-        self, player_id: str, websocket: ServerConnection
-    ) -> int:
-        narrations = await self.database.get_unacked_narrations(player_id)
-        display = await self.database.get_player_display(player_id)
-        for index, narration in enumerate(narrations):
-            narration["last_scene"] = index == len(narrations) - 1
-            await websocket.send(json.dumps({**narration, **display}, ensure_ascii=False))
-        return len(narrations)
-
-    async def _send_history(self, player_id: str, websocket: ServerConnection) -> None:
-        await websocket.send(json.dumps({
-            "type": "history",
-            "messages": await self.database.get_full_history(player_id),
-        }, ensure_ascii=False))
-
     async def _send_status(
-        self, participant_name: str, websocket: ServerConnection
+        self, user_name: str, websocket: ServerConnection
     ) -> None:
-        player_id = await self.sessions.role_for(participant_name)
+        player_id = await self.sessions.role_for(user_name)
         if player_id is None:
             raise RoundError("roles have not been assigned")
         display = await self.database.get_player_display(player_id)
@@ -431,13 +545,14 @@ class GameServer:
 
     async def _round_snapshot(self) -> dict:
         snapshot = self.rounds.snapshot()
-        connected = await self.sessions.connections_by_role()
+        assignments = await self.sessions.role_assignments()
         for player_id, player in snapshot["players"].items():
-            player["connected"] = connected.get(player_id, False)
+            player["connected"] = player_id in assignments
+            player["user"] = assignments.get(player_id)
         return snapshot
 
-    async def _broadcast_lobby(self) -> None:
-        message = await self.sessions.lobby_snapshot()
+    async def _broadcast_presence(self) -> None:
+        message = await self.sessions.presence_snapshot()
         await self.sessions.broadcast(message)
         await self.sessions.send_host(message)
 
@@ -485,7 +600,6 @@ async def run_server(game_path: Path, scenario_name: str) -> None:
     world_updater = WorldUpdater(llm, loader, settings.world_update_max_tokens)
     player_views = PlayerViewGenerator(llm, loader)
     narrator = Narrator(llm, loader, settings.narration_max_tokens)
-    participants = await database.get_participants()
     game = GameServer(
         database,
         world_updater,
@@ -493,13 +607,9 @@ async def run_server(game_path: Path, scenario_name: str) -> None:
         narrator,
         await database.current_round(),
         scenario_name,
-        participants,
+        {"A": loader.character_name("A"), "B": loader.character_name("B")},
     )
     await game.recover_round()
-    if not game.sessions.roles_assigned:
-        game.rounds.enter_lobby()
-        for player_id, player in game.rounds.players.items():
-            await database.save_player(player_id, player.status, player.action)
 
     async with serve(game.handler, settings.host, settings.port) as websocket_server:
         logger.info("Server listening on ws://%s:%s", settings.host, settings.port)

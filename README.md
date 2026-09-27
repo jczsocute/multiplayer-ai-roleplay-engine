@@ -1,6 +1,6 @@
 # AI RP Engine
 
-一个轻量级双人 AI 角色扮演引擎。服务器负责剧本、SQLite 状态和 DeepSeek 调用；两名玩家通过 Textual 终端客户端进入同一个游戏实例。
+一个轻量级双玩家 AI 角色扮演引擎。服务器负责剧本、SQLite 状态和 DeepSeek 调用；房间可容纳两名角色玩家与最多 98 名观众，所有普通用户通过 Textual 终端客户端进入同一个游戏实例。
 
 ## 服务器安装与配置
 
@@ -39,6 +39,8 @@ Smoke test 不会被普通单元测试自动执行。
 
 `templates/default/` 是创建新剧本时使用的受保护基础模板，不是可直接游玩的剧本，因此不会出现在服务器剧本列表中，也不能通过普通命令删除。
 
+仓库只跟踪 `templates/default/`。其他 `templates/<scenario_name>/` 都属于个人创作内容，已由 `.gitignore` 排除，不应提交或强制加入 Git。
+
 ### 数据层关系
 
 `world_state` 是唯一持续的客观世界状态（Canonical State），也是下一轮 World Updater 继承的主要状态输入。所有会影响未来世界演化的事实都应保存在其中，包括时间、环境、地点、NPC、隐藏信息、幕后行动，以及 A/B 的位置、身体、精神、物品、关系和必要认知。
@@ -55,7 +57,7 @@ world_state
    └── player_statusbar.B
 ```
 
-- `public_information`：系统明确向所有玩家公开的信息，例如日期、时间、公共进度或系统广播；不包含未发现地点、秘密行动和玩家私有状态。
+- `public_information`：可安全提供给 A/B Narrator 的共享叙事上下文，例如日期、时间和公共进度；不包含未发现地点、秘密行动和玩家私有状态，也不直接显示在 Player TUI 中。
 - `player_views`：A/B 各自当前能感知、知道、发现或合理推断的信息，回答“这个玩家现在知道什么”。
 - `player_statusbar`：从 `world_state` 中对应角色真实状态提炼出的 UI 摘要，也供 Narrator 理解角色当前可展示状态；它不是角色真实状态的唯一存储位置。
 
@@ -68,6 +70,8 @@ Narrator 只接收 `public_information`、当前玩家自己的 `player_view` �
 实际游戏位于 `games/<game_name>/`，内容包括从 Scenario Template 复制出的配置、`game.db`、当前世界状态、聊天历史及玩家状态。
 
 不要把 `games/` 当作剧本编辑入口。创建实例后，它拥有配置文件的独立副本；以后修改原 Template 不会影响旧实例。需要应用新版 Template 时，应创建新的 Game Instance。
+
+`games/` 中的所有内容都是本地运行数据和个人游玩内容，整个目录由 `.gitignore` 排除，不应提交或强制加入 Git。
 
 ## 创建自己的剧本
 
@@ -140,7 +144,7 @@ python -m server.main --delete-game lighthouse
 
 删除 Game Instance 会删除该局的数据库和进度，但不会删除 Scenario Template。
 
-## 两名玩家进入游戏
+## 用户进入房间与角色分配
 
 客户端连接：
 
@@ -149,7 +153,7 @@ python client/terminal.py --uri ws://SERVER_IP:8765 --name Alice
 python client/terminal.py --uri ws://SERVER_IP:8765 --name Bob
 ```
 
-Player 与 Host 是独立身份。两名玩家连接后都停留在 `LOBBY`，不会自动成为 Host，也不会自动获得 A/B；第三名 Player 会被拒绝。
+每个新连接都是运行时 User，默认身份为 Spectator；连接顺序不会自动决定 A/B。普通 User 最多同时在线 100 人，Host 是独立连接，不占此名额。同名用户同时在线时，新连接会被拒绝。
 
 在服务器主机上另开终端启动独立 Host TUI：
 
@@ -157,37 +161,95 @@ Player 与 Host 是独立身份。两名玩家连接后都停留在 `LOBBY`，�
 python client/host.py --uri ws://127.0.0.1:8765
 ```
 
-Host 连接不占玩家名额。第一版 Host 只接受 localhost 连接；如需从另一台管理设备操作，可使用 SSH 本地端口转发。看到两个昵称后，在 Host 底部命令栏输入：
+Host 只接受 localhost 连接；如需从另一台管理设备操作，可使用 SSH 本地端口转发。Host TUI 会列出房间内所有当前在线昵称。选择两名 User 后输入：
 
 ```text
 /assign Alice Bob
 ```
 
-表示 Alice → Player A、Bob → Player B。分配完成后两名玩家一起进入 `EDITING`。
+表示 Alice → Player A、Bob → Player B。其他在线 User 继续作为 Spectator。
 
-Player TUI 上方显示自己的历史、Narration、YAML 格式角色状态栏和公共信息；中间只显示 A/B 协作状态；底部严格分为多行 Draft TextArea 和单行 Command Input。
+`/assign` 可以重复用于换人，但当前仍有扮演者的 A、B 都必须处于 `PAUSED`；没有扮演者的角色视为空位。AI 正在 `PROCESSING` 时不允许换人。只有 role 实际变化的 User 会收到 UI reset 和完整角色视图；未变化的 Player 保留原状态。新接管角色进入 `EDITING` 且 Draft 为空，原 Player 降为 Spectator 并默认继续查看其原角色。
 
-主要操作：
+Player/Spectator TUI 上方的可滚动文字框显示当前角色历史、Room Chat 和角色状态栏，中间只显示 A/B 工作状态，底部是多行 Draft 与单行 Command。状态栏不再占用独立的常驻区域；载入角色视图时按“各轮行动 → 各轮输出 → 当前状态栏”显示，完成新一轮时追加“本轮输出 → 本轮状态栏”。状态栏使用绿色框线，内容仍以 YAML 展示。`public_information` 仅作为 Narrator 的共享创作输入，不直接展示给玩家。
+
+Player 命令：
 
 - `Enter`：在 Draft 中换行，不提交。
 - `/submit`：从 Draft TextArea 读取并提交当前完整行动；提交后内容保持可见但只读。
 - `/cancel`：从 `READY` 返回 `EDITING`，保留原 Draft 并恢复编辑。
 - `/pause`、`/resume`：暂停或恢复编辑。
-- `/status`：显示双方协作状态、本角色状态栏和公共信息。
-- `/retry`：AI 阶段失败后继续缺失步骤。
+- `/status`：只显示当前角色自己的状态栏；A/B 协作状态始终由输入框上方的实时状态区域显示。
+- `/chat`：把当前 Draft 作为 Room Chat 发送并清空，不改变角色状态，也不进入 AI history。
+- `/help`：在本地显示 Player 可用命令，不向服务器发送消息。
 - `/quit`：退出客户端。
 
-所有 Slash command 都在 Draft 下方的独立 Command Input 中输入，按 Enter 执行并清空命令栏；命令内容永远不会成为 Draft 正文。
+Spectator 命令：`/chat`、`/view A`、`/view B`、`/help`、`/quit`。Spectator 的 Draft 只用于 Room Chat，不能执行游戏控制命令；其 Draft 和 Command 灰色占位提示也只列出观众用途与命令，不会显示 `/submit`、`/pause` 等玩家命令。
+
+Host 命令：`/assign <nicknameA> <nicknameB>`、`/chat`、`/view A`、`/view B`、`/view world`、`/status`、`/retry`、`/help`、`/quit`。`/retry` 只属于 Host。三种身份的 `/help` 都由 TUI 本地处理，只显示当前身份可用命令。
+
+所有 Slash command 都在独立 Command Input 中输入。Player 处于 `READY` 或 `PROCESSING` 时 Draft 维持只读，因此该阶段暂时不能用 Draft 发送 `/chat`。
 
 双方提交后进入 `PROCESSING`。服务器只在阶段切换时广播 `WORLD_UPDATING`、`VIEW_GENERATING`、`NARRATION_GENERATING`，客户端在本地按秒计时并显示“世界更新中 · 3s”等状态。AI 完成后各自收到私有 Narration，服务器进入下一轮并清空旧 Draft。
 
-Host TUI 同时显示玩家昵称、连接状态、回合状态和处理阶段。每轮 World Update 完成后，Host 会收到并以 YAML 展示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`；这些完整调试数据不会发送给 Player。
+Host TUI 与普通客户端使用相同的 Identity、主视图、A/B 状态、Draft 和 Command 布局，并额外显示所有在线用户。它也不保留独立 Statusbar 区域：`/view A`、`/view B` 会在主文字框末尾显示绿色框线的当前状态栏；`/view world` 以 YAML 显示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`。完整调试数据不会发送给普通 User。
+
+### Story Plane 与 Room Plane
+
+Story Plane 包含 A/B Action、World Update、Player View、Narration 和 Statusbar，数据会按角色持久化并可进入 AI 上下文。
+
+Room Plane 包含 Presence、系统通知和 Host/Player/Spectator 真人聊天，只在当前服务器进程内广播，不写入 `chat_messages`，永远不会进入 World Updater 或 Narrator history。
+
+Room Chat 统一使用 `room_message` 协议。客户端按 `kind` 渲染：`[系统]` 为整行 dim cyan，`[管理员]`、`[昵称 (角色名)]`、`[昵称]` 使用三种不同前缀颜色，正文保持普通颜色。角色名由服务器提供，客户端不读取 Scenario 文件。
+
+### 角色 View 与历史顺序
+
+Player 固定查看自己的角色；Spectator 可用 `/view A|B`，Host 可额外 `/view world`。角色视图中的已完成回合按以下顺序重建到上方文字框：
+
+1. 该角色提交的 Action
+2. 该角色收到的 Narration
+3. 所有已完成回合之后显示最新的当前 Statusbar
+
+服务器协议仍保留每轮 Statusbar 快照，但 TUI 刷新时不在每个旧回合后重复展示状态栏。新回合完成时，当前打开的角色视图会即时追加“本轮输出”和绿色框线的“本轮状态栏”。
+
+Spectator 和 Host role view 不包含当前 Draft。只有当前真正扮演该角色的 Player 会在私有 `role_view`/`status` payload 中收到自己的 Draft。
+
+### WebSocket 消息概览
+
+- `joined`：连接身份与初始 spectator 状态。
+- `presence`：当前在线 User 列表及其 A/B role。
+- `identity_changed`：仅发给 assign/reassign 后 role 真正变化的 User，要求 reset UI。
+- `role_assigned`：房间级角色绑定结果。
+- `role_view`：按角色重建的历史、当前状态栏；Player 私有版本可额外含 Draft 和当前 View。
+- `role_round`：新完成回合的 Action→Narration→Statusbar。
+- `room_message`：统一的 system/host/player/spectator Room Chat。
+- `state`、`processing_stage`：A/B 工作状态与 AI 阶段。
+- `world_update`、`world_view`：仅 Host world view 使用的完整调试数据。
+
+关键 Room Plane payload 示例：
+
+```json
+{"type":"presence","users":[{"name":"Alice","role":"A"},{"name":"Tom","role":null}]}
+```
+
+```json
+{
+  "type": "room_message",
+  "kind": "player",
+  "sender": "Alice",
+  "role": "A",
+  "character_name": "林岚",
+  "text": "我觉得这里先不要开门。"
+}
+```
+
+`role_view` 是服务器按接收者权限组装的消息，而不是共享缓存：Spectator/Host role view 没有 `draft`；当前 Player 的私有版本才包含该角色 Draft。
 
 ## 断线与恢复
 
-Player 使用相同昵称重新连接，会恢复 A/B 角色、当前协作状态和未完成 Draft，并重放尚未确认的 Narration。断线不会改变底层回合状态；另一端会立即看到灰色“已离开”，重连后恢复原状态。Host 断开不影响游戏；重新连接后会恢复玩家名单、角色、状态和最近一次 World Update。
+User 断线后立即从 Presence 删除，昵称和 nickname→role 绑定不持久化。相同昵称以后重新连接会成为全新的 Spectator，必须由 Host 再次 assign。角色历史、世界状态、A/B 状态栏和 AI Recovery 数据仍按角色保留；原 Player 离开后该角色显示“无人扮演”。
 
-服务器重启时会从 SQLite 中保存的 AI 阶段继续处理，不重复已经成功完成的 World Update。
+服务器重启时在线 User 与角色绑定均为空，Host 必须重新 assign；服务器仍会从 SQLite 保存的 AI 阶段继续处理，不重复已经成功完成的 World Update。旧数据库启动时会删除旧 `participants` 表，并新增逐回合 `player_statusbars` 表；旧回合没有历史 statusbar 快照时不会伪造数据。
 
 ## 仅作为远程客户端
 

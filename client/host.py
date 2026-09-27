@@ -10,14 +10,14 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import Input, RichLog, Static, TextArea
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidURI
 
 try:
-    from client.display import to_yaml
+    from client.display import room_message_text, to_yaml
 except ModuleNotFoundError:  # Supports: python client/host.py
-    from display import to_yaml
+    from display import room_message_text, to_yaml
 
 
 STATUS_LABELS = {
@@ -34,6 +34,17 @@ PROCESSING_LABELS = {
     "NARRATION_GENERATING": "文段生成中",
 }
 
+HOST_HELP = """Host 命令：
+/assign <A昵称> <B昵称>  分配或重新分配角色
+/chat                    将 Draft 发送到房间聊天
+/view A                  查看 Player A 角色历史
+/view B                  查看 Player B 角色历史
+/view world              查看完整世界调试信息
+/status                  查询当前游戏状态
+/retry                   重试失败的 AI 阶段
+/help                    显示本帮助
+/quit                    退出 Host TUI"""
+
 
 class HostApp(App):
     CSS_PATH = Path(__file__).with_name("host.css")
@@ -47,18 +58,22 @@ class HostApp(App):
         super().__init__()
         self.uri = uri
         self.websocket = None
-        self.participants: list[dict] = []
+        self.users: list[dict] = []
         self.players: dict = {}
+        self.view = "world"
         self.processing_stage: str | None = None
         self.processing_started = 0.0
 
     def compose(self) -> ComposeResult:
         yield Static("正在连接服务器…", id="host-identity")
         yield RichLog(id="host-history", wrap=True, markup=False, auto_scroll=False)
-        yield Static("Connected Players:\n（等待玩家）\n\nRoles:\nA: 未分配\nB: 未分配", id="host-players")
-        yield Static("Processing: 空闲", id="host-processing")
+        yield Static("房间内所有用户\n（暂无）", id="host-presence")
+        yield Static("A ■ 无人扮演        B ■ 无人扮演", id="host-collaboration")
+        yield Static("Draft：", id="host-draft-label")
+        yield TextArea("", placeholder="Host 房间聊天 Draft", id="host-draft")
+        yield Static("Command：", id="host-command-label")
         yield Input(
-            placeholder="/assign <Player A 昵称> <Player B 昵称>  或  /quit",
+            placeholder="/assign <A昵称> <B昵称> /chat /view A|B|world /status /retry /help /quit",
             id="host-command",
         )
 
@@ -83,16 +98,11 @@ class HostApp(App):
         message_type = message.get("type")
         if message_type == "host_joined":
             self.query_one("#host-identity", Static).update(
-                f"Host · Scenario: {message.get('scenario', '')}"
+                f"Host · Scenario: {message.get('scenario', '')} · View: {self.view}"
             )
-        elif message_type == "lobby":
-            self.participants = message.get("participants", [])
-            self._render_players()
-        elif message_type == "role_assigned":
-            assignments = message.get("assignments", {})
-            for participant in self.participants:
-                participant["role"] = assignments.get(participant["name"])
-            self._render_players()
+        elif message_type == "presence":
+            self.users = message.get("users", [])
+            self._render_presence()
         elif message_type == "state":
             self.players = message.get("players", {})
             stage = str(message.get("stage", ""))
@@ -104,17 +114,25 @@ class HostApp(App):
                 if isinstance(value, dict)
             ):
                 self.processing_stage = None
-            self._render_players()
-            self._refresh_processing()
+            self._render_collaboration()
         elif message_type == "processing_stage":
             self._set_processing_stage(str(message.get("stage", "")))
-        elif message_type == "world_update":
-            round_id = message.get("round", "?")
-            self._append(Panel(
-                Text(to_yaml(message.get("result", {}))),
-                title=f"Round {round_id} World Update",
-                border_style="cyan",
-            ))
+        elif message_type in ("world_update", "world_view"):
+            if self.view == "world":
+                if message_type == "world_view":
+                    self.query_one("#host-history", RichLog).clear()
+                self._append(Panel(
+                    Text(to_yaml(message.get("result", {}))),
+                    title=f"Round {message.get('round', '?')} World Update",
+                    border_style="cyan",
+                ))
+        elif message_type == "role_view":
+            self._load_role_view(message)
+        elif message_type == "role_round":
+            if message.get("role") == self.view:
+                self._append_live_round(message.get("entries", []), message.get("statusbar", {}))
+        elif message_type == "room_message":
+            self._append(room_message_text(message))
         elif message_type == "round_complete":
             self._append(Text(f"第 {message.get('round')} 回合完成。", style="dim"))
         elif message_type in ("error", "notice"):
@@ -131,6 +149,9 @@ class HostApp(App):
                 await self.websocket.close()
             self.exit()
             return
+        if command == "/help":
+            self._append(Panel(HOST_HELP, title="命令帮助", border_style="cyan"))
+            return
         try:
             parts = shlex.split(command)
         except ValueError as exc:
@@ -143,33 +164,53 @@ class HostApp(App):
                 "player_b": parts[2],
             })
             return
-        self._append(Text("可用命令：/assign <A昵称> <B昵称>、/quit", style="yellow"))
+        if parts == ["/chat"]:
+            text = self.query_one("#host-draft", TextArea).text.strip()
+            if not text:
+                self._append(Text("Draft 不能为空。", style="yellow"))
+                return
+            await self._send({"type": "room_chat", "text": text})
+            self.query_one("#host-draft", TextArea).load_text("")
+            return
+        if len(parts) == 2 and parts[0] == "/view" and parts[1] in ("A", "B", "world"):
+            self.view = parts[1]
+            self.query_one("#host-identity", Static).update(f"Host · View: {self.view}")
+            await self._send({"type": "view", "view": self.view})
+            return
+        if parts == ["/status"]:
+            await self._send({"type": "status"})
+            return
+        if parts == ["/retry"]:
+            await self._send({"type": "retry_ai"})
+            return
+        self._append(Text(
+            "Host 命令无效；输入 /help 查看可用命令。",
+            style="yellow",
+        ))
 
-    def _render_players(self) -> None:
-        connected_lines = [
-            f"{item['name']} · {'在线' if item.get('connected') else '已离开'}"
-            for item in self.participants
-        ] or ["（等待玩家）"]
-        text = Text("Connected Players:\n" + "\n".join(connected_lines) + "\n\nRoles:\n")
-        for role in ("A", "B"):
-            participant = next(
-                (item for item in self.participants if item.get("role") == role), None
-            )
-            if participant is None:
-                text.append(f"{role}: 未分配\n", style="grey50")
-                continue
+    def _render_presence(self) -> None:
+        names = ", ".join(item["name"] for item in self.users) or "（暂无）"
+        self.query_one("#host-presence", Static).update(f"房间内所有用户\n{names}")
+
+    def _render_collaboration(self) -> None:
+        line = Text()
+        for index, role in enumerate(("A", "B")):
             state = self.players.get(role, {})
-            status = state.get("status", "LOBBY")
-            connected = participant.get("connected", False)
+            connected = state.get("connected", False)
+            status = state.get("status", "EDITING")
+            nickname = state.get("user") or ""
             if not connected:
-                label, color = "已离开", "grey50"
+                label, color = "无人扮演", "grey50"
             elif status == "PROCESSING" and self.processing_stage in PROCESSING_LABELS:
                 elapsed = max(0, int(time.monotonic() - self.processing_started))
                 label, color = f"{PROCESSING_LABELS[self.processing_stage]} · {elapsed}s", "blue"
             else:
                 label, color = STATUS_LABELS.get(status, (status, "white"))
-            text.append(f"{role} {participant['name']} ■ {label}\n", style=color)
-        self.query_one("#host-players", Static).update(text)
+            if index:
+                line.append("          ")
+            identity = f" {nickname}" if nickname else ""
+            line.append(f"{role}{identity} ■ {label}", style=color)
+        self.query_one("#host-collaboration", Static).update(line)
 
     def _set_processing_stage(self, stage: str) -> None:
         if stage in PROCESSING_LABELS:
@@ -177,18 +218,60 @@ class HostApp(App):
             self.processing_started = time.monotonic()
         elif stage in ("WAITING_INPUT", "FINISHED"):
             self.processing_stage = None
-        self._render_players()
-        self._refresh_processing()
+        self._render_collaboration()
 
     def _refresh_processing(self) -> None:
-        if self.processing_stage in PROCESSING_LABELS:
-            elapsed = max(0, int(time.monotonic() - self.processing_started))
-            value = f"{PROCESSING_LABELS[self.processing_stage]} · {elapsed}s"
-        else:
-            value = "空闲"
-        self.query_one("#host-processing", Static).update(f"Processing: {value}")
-        if self.players:
-            self._render_players()
+        if self.processing_stage and self.players:
+            self._render_collaboration()
+
+    def _load_role_view(self, message: dict) -> None:
+        self.view = message["role"]
+        history = self.query_one("#host-history", RichLog)
+        history.clear()
+        entries = message.get("history", [])
+        for item in entries:
+            if item.get("kind") != "statusbar":
+                self._write_role_entry(history, int(item["round"]), item)
+        if not any(item.get("kind") in ("action", "narration") for item in entries):
+            history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
+        history.write(
+            self._statusbar_panel(message.get("statusbar", {}), "当前状态栏"),
+            scroll_end=False,
+        )
+        history.scroll_end(animate=False)
+
+    def _append_live_round(self, entries: list[dict], statusbar) -> None:
+        history = self.query_one("#host-history", RichLog)
+        at_bottom = history.is_vertical_scroll_end
+        for item in entries:
+            if item.get("kind") == "narration":
+                history.write(
+                    Panel(str(item.get("content", "")), title="本轮输出"),
+                    scroll_end=at_bottom,
+                )
+        history.write(
+            self._statusbar_panel(statusbar, "本轮状态栏"),
+            scroll_end=at_bottom,
+        )
+
+    @staticmethod
+    def _write_role_entry(
+        history: RichLog, round_id: int, item: dict, *, scroll_end: bool = False
+    ) -> None:
+        kind = item.get("kind")
+        titles = {
+            "action": f"第 {round_id} 轮行动",
+            "narration": f"第 {round_id} 轮输出",
+        }
+        if kind in titles:
+            history.write(
+                Panel(str(item.get("content", "")), title=titles[kind]),
+                scroll_end=scroll_end,
+            )
+
+    @staticmethod
+    def _statusbar_panel(value, title: str) -> Panel:
+        return Panel(to_yaml(value), title=title, border_style="green")
 
     def action_log_page_up(self) -> None:
         self.query_one("#host-history", RichLog).action_page_up()

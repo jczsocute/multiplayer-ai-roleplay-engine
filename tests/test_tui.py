@@ -1,13 +1,14 @@
 import unittest
 
 from client.terminal import GameApp
-from textual.widgets import Input, TextArea
+from textual.widgets import Input, RichLog, TextArea
 
 
 class TestGameApp(GameApp):
     def __init__(self) -> None:
         super().__init__("ws://unused", "Tester")
         self.sent = []
+        self.appended = []
 
     def connect_to_server(self) -> None:
         pass
@@ -15,8 +16,132 @@ class TestGameApp(GameApp):
     async def _send(self, message: dict) -> None:
         self.sent.append(message)
 
+    def _append(self, renderable) -> None:
+        self.appended.append(renderable)
+
 
 class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_role_view_ends_with_current_statusbar_and_hides_old_statusbars(self) -> None:
+        app = TestGameApp()
+        async with app.run_test(size=(100, 36)):
+            await app._handle_message({
+                "type": "joined",
+                "name": "Tester",
+                "role": None,
+                "view_role": None,
+                "scenario": "test",
+            })
+            await app._handle_message({
+                "type": "role_view",
+                "role": "A",
+                "history": [
+                    {"round": 1, "kind": "action", "content": "检查房门"},
+                    {"round": 1, "kind": "narration", "content": "门后传来脚步声"},
+                    {"round": 1, "kind": "statusbar", "content": {"旧状态": "不再单列"}},
+                ],
+                "statusbar": {"精神状态": "警觉"},
+                "public_information": {"禁止展示": "幕后倒计时"},
+            })
+
+            self.assertEqual(app.view_role, "A")
+            self.assertEqual(app._draft_editor().text, "")
+            rendered = "\n".join(line.text for line in app.query_one("#history", RichLog).lines)
+            self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
+            self.assertLess(rendered.index("第 1 轮输出"), rendered.index("当前状态栏"))
+            self.assertIn("精神状态", rendered)
+            self.assertNotIn("旧状态", rendered)
+            self.assertNotIn("幕后倒计时", rendered)
+            self.assertEqual(str(app._statusbar_panel({}, "状态栏").border_style), "green")
+
+    async def test_completed_round_appends_output_then_green_statusbar(self) -> None:
+        app = TestGameApp()
+        async with app.run_test(size=(100, 36)):
+            await app._handle_message({
+                "type": "joined",
+                "name": "Tester",
+                "role": None,
+                "view_role": "A",
+                "scenario": "test",
+            })
+            await app._handle_message({
+                "type": "role_round",
+                "round": 2,
+                "role": "A",
+                "entries": [
+                    {"kind": "action", "content": "行动不重复追加"},
+                    {"kind": "narration", "content": "新的叙事"},
+                    {"kind": "statusbar", "content": {"旧": "值"}},
+                ],
+                "statusbar": {"体力": "疲惫"},
+            })
+
+            rendered = "\n".join(line.text for line in app.query_one("#history", RichLog).lines)
+            self.assertLess(rendered.index("本轮输出"), rendered.index("本轮状态栏"))
+            self.assertIn("新的叙事", rendered)
+            self.assertIn("体力", rendered)
+            self.assertNotIn("行动不重复追加", rendered)
+
+    async def test_spectator_commands_are_limited_to_chat_and_view(self) -> None:
+        app = TestGameApp()
+        async with app.run_test(size=(100, 36)) as pilot:
+            await app._handle_message({
+                "type": "joined",
+                "name": "Tester",
+                "role": None,
+                "view_role": None,
+                "scenario": "test",
+            })
+            command = app.query_one("#command-input", Input)
+            command.value = "/submit"
+            command.focus()
+            await pilot.press("enter")
+            self.assertEqual(app.sent, [])
+
+            command.value = "/view A"
+            await pilot.press("enter")
+            self.assertEqual(app.sent[-1], {"type": "view", "role": "A"})
+
+            editor = app._draft_editor()
+            editor.load_text("OOC hello")
+            command.value = "/chat"
+            await pilot.press("enter")
+            self.assertEqual(app.sent[-1], {"type": "room_chat", "text": "OOC hello"})
+            self.assertEqual(editor.text, "")
+
+    async def test_hints_and_local_help_follow_current_identity(self) -> None:
+        app = TestGameApp()
+        async with app.run_test(size=(100, 36)) as pilot:
+            await app._handle_message({
+                "type": "joined",
+                "name": "Tester",
+                "role": None,
+                "view_role": None,
+                "scenario": "test",
+            })
+            editor = app._draft_editor()
+            command = app.query_one("#command-input", Input)
+            self.assertIn("房间聊天", editor.placeholder)
+            self.assertNotIn("/submit", command.placeholder)
+
+            command.value = "/help"
+            command.focus()
+            await pilot.press("enter")
+            self.assertEqual(app.sent, [])
+            self.assertIn("观众命令", str(app.appended[-1].renderable))
+
+            await app._handle_message({
+                "type": "identity_changed",
+                "role": "A",
+                "view_role": "A",
+            })
+            self.assertIn("角色行动", editor.placeholder)
+            self.assertIn("/submit", command.placeholder)
+            app.appended.clear()
+            command.value = "/help"
+            await pilot.press("enter")
+            self.assertEqual(app.sent, [])
+            self.assertIn("玩家命令", str(app.appended[-1].renderable))
+
     async def test_draft_and_command_are_independent(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 32)) as pilot:

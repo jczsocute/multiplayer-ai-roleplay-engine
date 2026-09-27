@@ -1,5 +1,3 @@
-import json
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,58 +12,46 @@ class FakeWebSocket:
         self.messages = []
 
     async def send(self, message: str) -> None:
+        import json
         self.messages.append(json.loads(message))
 
 
-class ReplayTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reconnect_replays_until_ack_then_stops(self) -> None:
+class RoleViewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_role_history_order_and_draft_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
             completed = CompletedRound(1, {"A": "open", "B": "watch"})
-            await database.save_narrations(
-                1,
-                {
-                    "A": {"text": "Narration A", "status": {}},
-                    "B": {"text": "Narration B", "status": {}},
-                },
-            )
+            result = {
+                "world_state": {"gate": "open"},
+                "public_information": {"time": "noon"},
+                "player_views": {"A": {"gate": "visible"}, "B": {"road": "visible"}},
+                "player_statusbar": {"A": {"hp": 90}, "B": {"hp": 80}},
+            }
+            await database.save_world_update(completed, result)
+            await database.save_narrations(1, {
+                "A": {"text": "Narration A", "status": {}},
+                "B": {"text": "Narration B", "status": {}},
+            })
             await database.finish_round(completed)
             server = GameServer(database, None, None, None)
-            first_connection = FakeWebSocket()
+            server.rounds.players["A"].action = "private current draft"
 
-            await server._replay_narrations("A", first_connection)
+            spectator = FakeWebSocket()
+            await server._send_role_view(spectator, "A")
+            player = FakeWebSocket()
+            await server._send_role_view(
+                player, "A", include_draft=True, include_current_view=True
+            )
 
             self.assertEqual(
-                first_connection.messages,
-                [
-                    {
-                        "type": "narration",
-                        "round": 1,
-                        "text": "Narration A",
-                        "status": {},
-                        "last_scene": True,
-                        "statusbar": {},
-                        "public_information": {},
-                    }
-                ],
+                [item["kind"] for item in spectator.messages[0]["history"]],
+                ["action", "narration", "statusbar"],
             )
-
-            await server.sessions.add("A", first_connection)
-            await server._handle_command(
-                "A", first_connection, json.dumps({"type": "ack", "round_id": 1})
-            )
-            with sqlite3.connect(database.path) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT last_ack_round FROM players WHERE player_id = 'A'"
-                    ).fetchone()[0],
-                    1,
-                )
-
-            second_connection = FakeWebSocket()
-            await server._replay_narrations("A", second_connection)
-            self.assertEqual(second_connection.messages, [])
+            self.assertNotIn("draft", spectator.messages[0])
+            self.assertNotIn("private current draft", str(spectator.messages[0]))
+            self.assertEqual(player.messages[0]["draft"], "private current draft")
+            self.assertEqual(player.messages[0]["current_view"], {"gate": "visible"})
 
 
 if __name__ == "__main__":

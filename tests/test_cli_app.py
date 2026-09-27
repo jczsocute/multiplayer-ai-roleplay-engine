@@ -94,15 +94,18 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await sessions.join_host(host))
         first = await sessions.join("Chengzhe", FakeConnection())
         second = await sessions.join("Alice", FakeConnection())
+        third = await sessions.join("Third", FakeConnection())
 
-        self.assertFalse(hasattr(first[0], "is_host"))
-        self.assertIsNone(first[0].role)
-        self.assertIsNone(second[0].role)
-        self.assertIsNone(await sessions.join("Third", FakeConnection()))
+        self.assertIsNone(first.role)
+        self.assertIsNone(second.role)
+        self.assertIsNone(third.role)
 
         assignments = await sessions.assign_roles("Alice", "Chengzhe")
 
-        self.assertEqual(assignments, {"Chengzhe": "B", "Alice": "A"})
+        self.assertEqual(
+            assignments,
+            {"Chengzhe": "B", "Alice": "A", "Third": None},
+        )
         self.assertTrue(sessions.roles_assigned)
 
     async def test_lobby_activation_and_state_broadcast(self) -> None:
@@ -142,34 +145,30 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
                 connection.messages[3]["players"]["B"]["status"], "PROCESSING"
             )
 
-    async def test_role_assignment_persists_for_reconnect(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Database(str(Path(directory) / "game.db"))
-            await database.initialize()
-            await database.register_participant("Chengzhe")
-            await database.register_participant("Alice")
-            await database.save_role_assignment({"Chengzhe": "B", "Alice": "A"})
+    async def test_disconnect_releases_nickname_and_role(self) -> None:
+        sessions = Sessions()
+        original = FakeConnection()
+        await sessions.join("Chengzhe", original)
+        await sessions.join("Alice", FakeConnection())
+        await sessions.assign_roles("Chengzhe", "Alice")
 
-            restored = Sessions(await database.get_participants())
-            joined = await restored.join("Chengzhe", FakeConnection())
+        removed = await sessions.remove("Chengzhe", original)
+        rejoined = await sessions.join("Chengzhe", FakeConnection())
 
-            self.assertFalse(joined[1])
-            self.assertEqual(joined[0].role, "B")
+        self.assertEqual(removed.role, "A")
+        self.assertIsNone(rejoined.role)
+        self.assertIsNone(rejoined.view_role)
+        self.assertFalse(sessions.roles_assigned)
 
     async def test_host_command_assigns_roles_and_activates_lobby(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None, participants=[])
+            server = GameServer(database, None, None, None)
             await server.sessions.join("Chengzhe", FakeConnection())
             await server.sessions.join("Alice", FakeConnection())
             host = FakeConnection()
             await server.sessions.join_host(host)
-            self.assertTrue(all(
-                player.status == PlayerStatus.LOBBY
-                for player in server.rounds.players.values()
-            ))
-
             await server._handle_host_command(
                 host,
                 json.dumps({
@@ -226,24 +225,23 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(connection_a.messages[-1]["statusbar"], {"secret_a": 1})
             self.assertEqual(connection_b.messages[-1]["statusbar"], {"secret_b": 2})
             self.assertNotIn("secret_b", connection_a.messages[-1]["statusbar"])
+            self.assertNotIn("public_information", connection_a.messages[-1])
+            self.assertNotIn("public_information", connection_b.messages[-1])
 
     async def test_disconnect_keeps_round_status_and_reconnect_restores_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            participants = [
-                {"name": "Chengzhe", "role": "A"},
-                {"name": "Alice", "role": "B"},
-            ]
-            server = GameServer(database, None, None, None, participants=participants)
+            server = GameServer(database, None, None, None)
             connection_a = FakeConnection()
             connection_b = FakeConnection()
             await server.sessions.join("Chengzhe", connection_a)
             await server.sessions.join("Alice", connection_b)
+            await server.sessions.assign_roles("Chengzhe", "Alice")
             server.rounds.set_action("A", "检查桌上的信")
             server.rounds.submit("A")
 
-            await server.sessions.remove("Chengzhe", connection_a)
+            removed = await server.sessions.remove("Chengzhe", connection_a)
             disconnected = await server._round_snapshot()
             await server.sessions.broadcast(disconnected)
 
@@ -253,9 +251,10 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
 
             rejoined = await server.sessions.join("Chengzhe", FakeConnection())
             reconnected = await server._round_snapshot()
-            self.assertEqual(rejoined[0].role, "A")
+            self.assertEqual(removed.role, "A")
+            self.assertIsNone(rejoined.role)
             self.assertEqual(reconnected["players"]["A"]["status"], "READY")
-            self.assertTrue(reconnected["players"]["A"]["connected"])
+            self.assertFalse(reconnected["players"]["A"]["connected"])
 
     async def test_latest_draft_is_persisted_and_returned_by_status(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -282,33 +281,19 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            participants = [
-                {"name": "Chengzhe", "role": "A"},
-                {"name": "Alice", "role": "B"},
-            ]
-            server = GameServer(database, None, None, None, participants=participants)
+            server = GameServer(database, None, None, None)
             connection_b = FakeConnection()
             await server.sessions.join("Alice", connection_b)
 
             await server.handler(JoinThenDisconnectConnection("Chengzhe"))
 
-            presence_events = [
-                message.get("event")
+            room_texts = [
+                message.get("text")
                 for message in connection_b.messages
-                if message.get("type") == "system"
+                if message.get("type") == "room_message"
             ]
-            self.assertEqual(presence_events, ["reconnected", "left"])
-            states = [
-                message
-                for message in connection_b.messages
-                if message.get("type") == "state"
-            ]
-            self.assertTrue(states[0]["players"]["A"]["connected"])
-            self.assertFalse(states[-1]["players"]["A"]["connected"])
-            self.assertEqual(
-                states[0]["players"]["A"]["status"],
-                states[-1]["players"]["A"]["status"],
-            )
+            self.assertIn("Chengzhe 已加入房间。", room_texts)
+            self.assertIn("Chengzhe 已离开房间。", room_texts)
 
 
 class CliRoundFlowTests(unittest.TestCase):
