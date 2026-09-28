@@ -7,13 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from server.config import load_role_limits
-from server.database import Database
-from server.main import GameServer
-from server.models import CompletedRound, PlayerStatus
-from server.roles import RoleConfig
-from server.round_manager import RoundManager
-from server.scenario_manager import ScenarioManager
-from server.session import Sessions
+from server.gameserver.database import Database
+from server.gameserver.game_server import GameServer
+from server.gameserver.models import CompletedRound, PlayerStatus
+from server.gameserver.roles import RoleConfig
+from server.gameserver.round_manager import RoundManager
+from server.platform.scenario_manager import ScenarioManager
+from server.gameserver.session import Sessions
+from tests.support import user
 
 
 class FakeConnection:
@@ -73,11 +74,17 @@ class ScenarioRoleScaffoldTests(unittest.TestCase):
             manager = ScenarioManager(root / "templates", root / "games")
             for count in (2, 3, 4):
                 scenario = manager.create_scenario(f"story_{count}", count)
-                roles = json.loads((scenario / "roles.json").read_text(encoding="utf-8"))
+                roles = json.loads((scenario / "metadata.json").read_text(encoding="utf-8"))
                 self.assertEqual(roles, {
                     "count": count,
                     "names": [f"角色{index}" for index in range(1, count + 1)],
+                    # The CLI scenario name becomes the payload Script title.
+                    "title": f"story_{count}",
+                    "introduction": "",
+                    "tags": [],
                 })
+                # A scaffolded payload never keeps the legacy file name.
+                self.assertFalse((scenario / "roles.json").exists())
                 role_ids = {f"P{index}" for index in range(1, count + 1)}
                 self.assertEqual(
                     {path.stem for path in (scenario / "characters").glob("player_*.md")},
@@ -130,15 +137,20 @@ class DynamicRoundAndSessionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_three_role_assignment_and_views(self) -> None:
         sessions = Sessions(("P1", "P2", "P3"))
-        sockets = {name: FakeConnection() for name in ("Alice", "Bob", "Carol", "Tom")}
-        for name, socket in sockets.items():
-            await sessions.join(name, socket)
-        await sessions.assign_roles({"P1": "Alice", "P2": "Bob", "P3": "Carol"})
-        await sessions.set_view("Tom", "P3")
+        names = ("Alice", "Bob", "Carol", "Tom")
+        sockets = {}
+        for index, name in enumerate(names, 1):
+            sockets[name] = FakeConnection()
+            await sessions.join(user(index, name), sockets[name])
+        await sessions.assign_roles({"P1": 1, "P2": 2, "P3": 3})
+        await sessions.set_view(4, "P3")
         self.assertEqual(await sessions.role_assignments(), {
+            "P1": 1, "P2": 2, "P3": 3
+        })
+        self.assertEqual(await sessions.role_usernames(), {
             "P1": "Alice", "P2": "Bob", "P3": "Carol"
         })
-        self.assertEqual(sessions.users["Tom"].view_role, "P3")
+        self.assertEqual(sessions.users[4].view_role, "P3")
 
 
 class DynamicDatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -224,10 +236,13 @@ class DynamicAiFlowTests(unittest.IsolatedAsyncioTestCase):
                 database, updater, UnusedViews(), narrator, role_config=roles
             )
             sockets = {}
-            for role in roles.role_ids:
+            assignments = {}
+            for index, role in enumerate(roles.role_ids, 1):
                 sockets[role] = FakeConnection()
-                await server.sessions.add(role, sockets[role])
+                await server.sessions.join(user(index, f"player{index}"), sockets[role])
+                assignments[role] = index
                 server.rounds.set_action(role, f"action {role}")
+            await server.sessions.assign_roles(assignments)
             server.rounds.submit("P1")
             server.rounds.submit("P2")
             completed = server.rounds.submit("P3")

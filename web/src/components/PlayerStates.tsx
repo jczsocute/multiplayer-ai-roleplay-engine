@@ -1,6 +1,6 @@
 import type { PlayerState, Role, RoleDefinition } from "../protocol";
 
-const labels: Record<string, string> = { LOBBY: "等待", EDITING: "编辑中", READY: "已提交", PAUSED: "已暂停", PROCESSING: "处理中" };
+const labels: Record<string, string> = { EDITING: "编辑中", READY: "已提交", PAUSED: "已暂停", PROCESSING: "处理中" };
 
 export function PlayerStates({ players, roles }: {
   players: Partial<Record<Role, PlayerState>>;

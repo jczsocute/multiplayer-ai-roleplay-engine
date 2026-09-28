@@ -40,9 +40,23 @@ describe("protocol reducer", () => {
     expect(spectator.storyEntries).toEqual([]);
   });
 
+  it("joined stores the authenticated user and host capability", () => {
+    const joined = reducer(initialState, { type: "server", message: {
+      type: "joined", protocol_version: 4, user: { id: 17, username: "Alice" },
+      role: "P1", view_role: "P1", is_host: true, scenario: "lighthouse",
+      resume_token: "token-1",
+      roles: [{ id: "P1", name: "林岚" }, { id: "P2", name: "周砚" }],
+    }});
+    expect(joined.connection).toBe("CONNECTED");
+    expect(joined.authUser).toEqual({ id: 17, username: "Alice" });
+    expect(joined.isHost).toBe(true);
+    expect(joined.role).toBe("P1");
+  });
+
   it("resumed restores connection and identity", () => {
     const resumed = reducer({ ...initialState, connection: "RECONNECTING" }, { type: "server", message: {
-      type: "resumed", protocol_version: 3, name: "Alice", role: "P1", view_role: "P1",
+      type: "resumed", protocol_version: 4, user: { id: 17, username: "Alice" },
+      role: "P1", view_role: "P1", is_host: false,
       scenario: "lighthouse", resume_token: "token-2",
       roles: [{ id: "P1", name: "林岚" }, { id: "P2", name: "周砚" }, { id: "P3", name: "苏禾" }],
     }});
@@ -51,6 +65,28 @@ describe("protocol reducer", () => {
     expect(resumed.viewRole).toBe("P1");
     expect(resumed.roles).toHaveLength(3);
     expect(resumed.resumeToken).toBe("token-2");
+    expect(resumed.isHost).toBe(false);
+  });
+
+  it("auth_lost clears the authenticated user", () => {
+    const authed = reducer(initialState, { type: "auth", user: { id: 5, username: "Bob" } });
+    const lost = reducer(authed, { type: "auth_lost", detail: "登录状态已失效" });
+    expect(lost.authUser).toBeNull();
+    expect(lost.isHost).toBe(false);
+    expect(lost.errors).toContain("登录状态已失效");
+  });
+
+  it("session_replaced drops back to the join screen", () => {
+    const active = reducer(initialState, { type: "server", message: {
+      type: "joined", protocol_version: 4, user: { id: 17, username: "Alice" },
+      role: null, view_role: null, is_host: false, scenario: "test",
+      resume_token: "t", roles: [{ id: "P1", name: "A" }],
+    }});
+    const replaced = reducer(active, { type: "server", message: {
+      type: "session_replaced", detail: "该账号已在新的连接中接管本局。",
+    }});
+    expect(replaced.connection).toBe("DISCONNECTED");
+    expect(replaced.authUser).toEqual({ id: 17, username: "Alice" });
   });
 
   it("reconnect keeps current story and room chat", () => {
@@ -75,9 +111,10 @@ describe("protocol reducer", () => {
     expect(onChat.chatUnread).toBe(0);
   });
 
-  it("ui_config can disable the room key field", () => {
-    const configured = reducer(initialState, { type: "ui_config", roomKeyRequired: false });
+  it("ui_config can disable the room key field and registration", () => {
+    const configured = reducer(initialState, { type: "ui_config", roomKeyRequired: false, allowRegistration: false });
     expect(configured.roomKeyRequired).toBe(false);
-    expect(reducer(initialState, { type: "ui_config", roomKeyRequired: true }).roomKeyRequired).toBe(true);
+    expect(configured.allowRegistration).toBe(false);
+    expect(reducer(initialState, { type: "ui_config", roomKeyRequired: true, allowRegistration: true }).roomKeyRequired).toBe(true);
   });
 });

@@ -5,11 +5,24 @@ __pycache__/
 
 # Environment
 .env
+.env.local
+.env.*.local
 
 # Database
 *.db
 *.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 database/*.db
+/data/
 
 # Runtime game instances and personal scenario content
 /games/
@@ -31,15 +44,26 @@ logs/*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Temporary
 *.tmp
+*.temp
 *.swp
 *.bak
+*~
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
 # Web development dependencies (the production build is committed).
 /web/node_modules/
 /web/*.tsbuildinfo
+
+# Local credentials and private keys
+*.pem
+*.key
+credentials*
+*tunnel*credentials*.json

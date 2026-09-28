@@ -1,7 +1,7 @@
 import unittest
 
-from server.models import PlayerStatus
-from server.round_manager import RoundError, RoundManager
+from server.gameserver.models import PlayerStatus
+from server.gameserver.round_manager import RoundError, RoundManager
 
 
 class RoundManagerTests(unittest.TestCase):

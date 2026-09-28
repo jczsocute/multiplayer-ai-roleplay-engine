@@ -70,7 +70,7 @@ export function StoryView({
       {entries.map((entry, index) => {
         if (entry.kind === "statusbar") {
           return <details className="statusbar-card" key={`${entry.round ?? "live"}-statusbar-${index}`}>
-            <summary>状态 · Round {entry.round ?? "—"}</summary>
+            <summary>状态 · 第 {entry.round ?? "—"} 回合</summary>
             <StatusView value={entry.content} />
           </details>;
         }

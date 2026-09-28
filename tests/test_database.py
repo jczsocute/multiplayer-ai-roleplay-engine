@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.database import Database
-from server.models import CompletedRound
+from server.gameserver.database import Database
+from server.gameserver.models import CompletedRound
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -86,6 +86,49 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     connection.execute("SELECT content FROM public_world_info").fetchone()[0],
                     '{"time": "morning"}',
                 )
+
+    async def test_narrator_history_uses_whole_recent_rounds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            result = {
+                "world_state": {"tick": 0},
+                "public_information": {},
+                "player_views": {"P1": {}, "P2": {}},
+                "player_statusbar": {"P1": {}, "P2": {}},
+            }
+            for round_id in (1, 2, 3):
+                completed = CompletedRound(
+                    round_id, {"P1": f"a{round_id}", "P2": f"b{round_id}"}
+                )
+                await database.save_world_update(completed, result)
+                await database.save_narrations(
+                    round_id,
+                    {
+                        "P1": {"text": f"n{round_id}", "status": {}},
+                        "P2": {"text": f"m{round_id}", "status": {}},
+                    },
+                )
+                await database.finish_round(completed)
+                if round_id < 3:
+                    await database.create_round(round_id + 1)
+
+            window = await database.get_narrator_history("P1", 2)
+            self.assertEqual(
+                [(item["role"], item["content"]) for item in window],
+                [
+                    ("player", "a2"),
+                    ("narrator", "n2"),
+                    ("player", "a3"),
+                    ("narrator", "n3"),
+                ],
+            )
+            single = await database.get_narrator_history("P1", 1)
+            self.assertEqual(
+                [(item["role"], item["content"]) for item in single],
+                [("player", "a3"), ("narrator", "n3")],
+            )
+            self.assertEqual(len(await database.get_narrator_history("P1", 20)), 6)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ export function RoomChat({ messages, draft, disabled, onDraft, onSend }: Props) 
     setShowJump(!nearBottom);
   };
   return <section className="chat-view">
-    <h2>Room Chat</h2>
+    <h2>房间聊天</h2>
     <div className="chat-scroll" ref={scroll} onScroll={onScroll}>
       {messages.length === 0 && <p className="muted">本次连接尚无消息。</p>}
       {messages.map((message, index) => <p className={`chat-message message-${message.kind}`} key={index}>

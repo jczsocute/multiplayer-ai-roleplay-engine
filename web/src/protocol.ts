@@ -1,11 +1,13 @@
-export const PROTOCOL_VERSION = 3;
-export const MAX_NICKNAME_LENGTH = 32;
+export const PROTOCOL_VERSION = 6;
+export const MAX_USERNAME_LENGTH = 32;
+export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_ROOM_CHAT_LENGTH = 4000;
 export const MAX_ACTION_LENGTH = 20000;
 
 export type Role = string;
 export type RoleDefinition = { id: Role; name: string };
-export type PlayerStatus = "LOBBY" | "EDITING" | "READY" | "PAUSED" | "PROCESSING";
+export type AuthUser = { id: number; username: string };
+export type PlayerStatus = "EDITING" | "READY" | "PAUSED" | "PROCESSING";
 export type ProcessingStage =
   | "WAITING_INPUT"
   | "WORLD_UPDATING"
@@ -26,15 +28,18 @@ export type PlayerState = {
   has_action: boolean;
   connected: boolean;
   user?: string | null;
+  user_id?: number | null;
   character_name?: string | null;
 };
 
 export type JoinedMessage = {
   type: "joined";
   protocol_version: number;
-  name: string;
+  user: AuthUser;
   role: Role | null;
   view_role: Role | null;
+  is_host: boolean;
+  reclaimed?: boolean;
   scenario: string;
   resume_token: string;
   roles: RoleDefinition[];
@@ -42,14 +47,15 @@ export type JoinedMessage = {
 export type ResumedMessage = {
   type: "resumed";
   protocol_version: number;
-  name: string;
+  user: AuthUser;
   role: Role | null;
   view_role: Role | null;
+  is_host: boolean;
   scenario: string;
   resume_token: string;
   roles: RoleDefinition[];
 };
-export type PresenceMessage = { type: "presence"; users: Array<{ name: string; role: Role | null; connected?: boolean }> };
+export type PresenceMessage = { type: "presence"; users: Array<{ user_id?: number; name: string; role: Role | null; connected?: boolean }> };
 export type IdentityChangedMessage = { type: "identity_changed"; role: Role | null; view_role: Role | null; reset: boolean };
 export type RoleAssignedMessage = { type: "role_assigned"; assignments: Record<string, Role | null>; changed_users: string[] };
 export type RoleViewMessage = {
@@ -86,18 +92,22 @@ export type StatusMessage = {
   current_view?: unknown;
 };
 export type RoundCompleteMessage = { type: "round_complete"; round: number };
-export type ErrorMessage = { type: "error"; detail: string };
+export type SessionReplacedMessage = { type: "session_replaced"; detail: string };
+export type RoomClosedMessage = { type: "room_closed"; detail: string };
+export type KickedMessage = { type: "kicked"; reason: string };
+export type ErrorMessage = { type: "error"; detail: string; code?: string };
 export type NoticeMessage = { type: "notice"; detail?: string; text?: string };
 
 export type ServerMessage =
   | JoinedMessage | ResumedMessage | PresenceMessage | IdentityChangedMessage
   | RoleAssignedMessage | RoleViewMessage | RoleRoundMessage | RoomMessage
   | StateMessage | ProcessingStageMessage | StatusMessage | RoundCompleteMessage
-  | ErrorMessage | NoticeMessage;
+  | SessionReplacedMessage | RoomClosedMessage | KickedMessage | ErrorMessage
+  | NoticeMessage;
 
 export type ClientMessage =
-  | { type: "join"; name: string; room_key?: string }
-  | { type: "resume"; name: string; room_key?: string; resume_token: string }
+  | { type: "join"; room_key?: string; password?: string }
+  | { type: "resume"; room_key?: string; password?: string; resume_token: string }
   | { type: "leave" }
   | { type: "action"; text: string }
   | { type: "submit" }
@@ -106,6 +116,10 @@ export type ClientMessage =
   | { type: "resume" }
   | { type: "status" }
   | { type: "room_chat"; text: string }
+  | { type: "retry" }
+  | { type: "rollback"; round: number }
+  | { type: "assign_roles"; assignments: Record<Role, number> }
+  | { type: "kick_user"; user_id: number }
   | { type: "view"; role: Role };
 
 export function parseServerMessage(raw: string): ServerMessage {

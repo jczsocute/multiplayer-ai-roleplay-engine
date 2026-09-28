@@ -4,12 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.database import Database
-from server.llm.narrator import Narrator
-from server.llm.player_view import PlayerViewGenerator
-from server.llm.world_update import WorldUpdater
-from server.main import GameServer
-from server.models import PlayerStatus
+from server.gameserver.database import Database
+from server.gameserver.llm.narrator import Narrator
+from server.gameserver.llm.player_view import PlayerViewGenerator
+from server.gameserver.llm.world_update import WorldUpdater
+from server.gameserver.game_server import GameServer
+from server.gameserver.models import PlayerStatus
+from tests.support import user
 
 
 class MockWorldUpdater:
@@ -186,23 +187,22 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
             updater = MockWorldUpdater()
             player_views = MockPlayerViews()
             narrator = MockNarrator()
-            server = GameServer(database, updater, player_views, narrator)
+            server = GameServer(database, updater, player_views, narrator, owner_user_id=1)
             websocket = FakeWebSocket()
             player_p1_socket = FakeWebSocket()
             player_p2_socket = FakeWebSocket()
-            host_socket = FakeWebSocket()
-            await server.sessions.add("P1", player_p1_socket)
-            await server.sessions.add("P2", player_p2_socket)
-            await server.sessions.join_host(host_socket)
+            await server.sessions.join(user(1, "P1"), player_p1_socket)
+            await server.sessions.join(user(2, "P2"), player_p2_socket)
+            await server.sessions.assign_roles({"P1": 1, "P2": 2})
 
             await server._handle_command(
-                "P1", websocket, json.dumps({"type": "action", "text": "open the gate"})
+                1, websocket, json.dumps({"type": "action", "text": "open the gate"})
             )
             await server._handle_command(
-                "P2", websocket, json.dumps({"type": "action", "text": "stand guard"})
+                2, websocket, json.dumps({"type": "action", "text": "stand guard"})
             )
-            await server._handle_command("P1", websocket, json.dumps({"type": "submit"}))
-            await server._handle_command("P2", websocket, json.dumps({"type": "submit"}))
+            await server._handle_command(1, websocket, json.dumps({"type": "submit"}))
+            await server._handle_command(2, websocket, json.dumps({"type": "submit"}))
 
             self.assertEqual(len(updater.calls), 1)
             self.assertEqual(
@@ -240,12 +240,6 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 ],
                 ["Narration for P2."],
             )
-            host_updates = [
-                message for message in host_socket.messages
-                if message["type"] == "world_update"
-            ]
-            self.assertEqual(len(host_updates), 1)
-            self.assertEqual(host_updates[0]["result"]["world_state"], {"gate": "open"})
             self.assertFalse(any(
                 message["type"] == "world_update"
                 for message in player_p1_socket.messages + player_p2_socket.messages
@@ -254,13 +248,8 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 message["stage"] for message in player_p1_socket.messages
                 if message["type"] == "processing_stage"
             ]
-            host_stages = [
-                message["stage"] for message in host_socket.messages
-                if message["type"] == "processing_stage"
-            ]
             for stage in ("WORLD_UPDATING", "NARRATION_GENERATING"):
                 self.assertIn(stage, player_stages)
-                self.assertIn(stage, host_stages)
             self.assertEqual(
                 await database.get_world_state(),
                 '{"gate": "open"}',
@@ -298,49 +287,60 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-    async def test_failed_narration_can_retry_without_reverting_world(self) -> None:
+    async def test_failed_narration_retry_reruns_world_and_all_narrations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
-            await database.initialize()
+            await database.initialize("initial world")
             updater = MockWorldUpdater()
             player_views = MockPlayerViews()
             narrator = FlakyNarrator()
-            server = GameServer(database, updater, player_views, narrator)
+            server = GameServer(database, updater, player_views, narrator, owner_user_id=1)
             websocket = FakeWebSocket()
-            await server.sessions.add("P1", websocket)
-            await server.sessions.add("P2", FakeWebSocket())
+            await server.sessions.join(user(1, "P1"), websocket)
+            await server.sessions.join(user(2, "P2"), FakeWebSocket())
+            await server.sessions.assign_roles({"P1": 1, "P2": 2})
 
             await server._handle_command(
-                "P1", websocket, json.dumps({"type": "action", "text": "open the gate"})
+                1, websocket, json.dumps({"type": "action", "text": "open the gate"})
             )
             await server._handle_command(
-                "P2", websocket, json.dumps({"type": "action", "text": "stand guard"})
+                2, websocket, json.dumps({"type": "action", "text": "stand guard"})
             )
-            await server._handle_command("P1", websocket, json.dumps({"type": "submit"}))
-            with self.assertLogs("server.main", level="ERROR"):
-                await server._handle_command("P2", websocket, json.dumps({"type": "submit"}))
+            await server._handle_command(1, websocket, json.dumps({"type": "submit"}))
+            with self.assertLogs("server.gameserver.game_server", level="ERROR"):
+                await server._handle_command(2, websocket, json.dumps({"type": "submit"}))
 
+            # The pipeline stopped mid-way: round 1 is unfinished, so its output is
+            # not partial-retried; the whole round is re-run instead.
             self.assertEqual(server.rounds.round_number, 1)
+            self.assertEqual(await database.get_world_state(), '{"gate": "open"}')
+            self.assertEqual([call[0] for call in narrator.calls], ["P1", "P2"])
+
+            # The game owner retries through the normal public command path.
+            await server._handle_command(1, websocket, json.dumps({"type": "retry"}))
+
+            # WorldUpdater runs again from the base world; every Narrator runs again,
+            # including the P1 narration that succeeded the first time.
+            self.assertEqual(len(updater.calls), 2)
+            self.assertEqual(updater.calls[1][0], "initial world")
+            self.assertEqual(
+                updater.calls[1][1], {"P1": "open the gate", "P2": "stand guard"}
+            )
+            self.assertEqual([call[0] for call in narrator.calls], ["P1", "P2", "P1", "P2"])
+            self.assertEqual(server.rounds.round_number, 2)
             self.assertTrue(
                 all(
-                    player.status == PlayerStatus.PROCESSING
+                    player.status == PlayerStatus.EDITING
                     for player in server.rounds.players.values()
                 )
             )
-            self.assertEqual(
-                await database.get_world_state(),
-                '{"gate": "open"}',
-            )
-
-            host = FakeWebSocket()
-            await server.sessions.join_host(host)
-            await server._handle_host_command(
-                host, json.dumps({"type": "retry_ai"})
-            )
-
-            self.assertEqual(len(updater.calls), 1)
-            self.assertEqual(server.rounds.round_number, 2)
             with sqlite3.connect(database.path) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM chat_messages WHERE round_number = 1"
+                    ).fetchone()[0],
+                    4,
+                )
                 self.assertEqual(
                     connection.execute(
                         "SELECT COUNT(*) FROM player_views WHERE round_id = 1"

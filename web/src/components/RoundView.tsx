@@ -13,7 +13,7 @@ export function RoundView({ round, stage }: { round: number | null; stage: strin
     return () => window.clearInterval(timer);
   }, [stage]);
   return <div className="round-bubble">
-    <span>Round {round ?? "—"}</span>
+    <span>第 {round ?? "—"} 回合</span>
     {stage && <span className="processing"> · {stageLabels[stage] ?? stage} · {elapsed}s</span>}
   </div>;
 }

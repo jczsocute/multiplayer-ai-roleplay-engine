@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.database import Database
-from server.main import GameServer
-from server.models import CompletedRound
+from server.gameserver.database import Database
+from server.gameserver.game_server import GameServer
+from server.gameserver.models import CompletedRound
 
 
 class FakeWebSocket:

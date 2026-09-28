@@ -1,229 +1,256 @@
-import { useEffect, useReducer, useRef } from "react";
-import { GameScreen } from "./components/GameScreen";
-import { JoinScreen } from "./components/JoinScreen";
-import { PROTOCOL_VERSION, type ClientMessage } from "./protocol";
-import { initialState, reducer, type ClientState } from "./state";
-import { openGameSocket, sendMessage } from "./websocket";
+import { useEffect, useRef, useState } from "react";
+import GameApp from "./GameApp";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
+import { AuthScreen } from "./components/AuthScreen";
+import { PlatformHome } from "./components/PlatformHome";
+import { humanizeError } from "./errors";
+import { formatLocalTime } from "./lobby";
+import type { AuthUser } from "./protocol";
+import type { GameItem, RoomItem, TemplateItem } from "./types";
 
-const NICKNAME_KEY = "nickname";
-const SESSION_KEY = "rp.session";
+type UiConfig = {
+  platform_mode?: boolean;
+  font_scale?: number;
+  allow_registration?: boolean;
+  min_role_count?: number;
+  max_role_count?: number;
+};
 
-type StoredSession = { nickname: string; roomKey: string; resumeToken: string };
-
-function loadStoredSession(): StoredSession | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const value = JSON.parse(raw) as Partial<StoredSession>;
-    if (value.nickname && value.resumeToken) {
-      return { nickname: value.nickname, roomKey: value.roomKey ?? "", resumeToken: value.resumeToken };
-    }
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-function saveStoredSession(session: StoredSession) {
-  try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } catch {
-    // storage can be unavailable in private mode; ignore
-  }
-}
-
-function clearStoredSession() {
-  try {
-    sessionStorage.removeItem(SESSION_KEY);
-  } catch {
-    // ignore
-  }
-}
-
-function initialFromStorage(): ClientState {
-  const nickname = localStorage.getItem(NICKNAME_KEY) ?? "";
-  const session = loadStoredSession();
-  if (session) {
-    return {
-      ...initialState,
-      connection: "RECONNECTING",
-      nickname: session.nickname,
-      roomKey: session.roomKey,
-      resumeToken: session.resumeToken,
-    };
-  }
-  return { ...initialState, nickname };
-}
-
-const BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
+const DEFAULT_ROLE_COUNTS = [2, 3, 4];
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, undefined, initialFromStorage);
-  const socket = useRef<WebSocket | null>(null);
-  const joined = useRef(false);
-  const explicitLeave = useRef(false);
-  const serverRejection = useRef("");
-  const retryTimer = useRef<number | null>(null);
-  const retryAttempt = useRef(0);
-  const started = useRef(false);
-  const sessionRef = useRef<StoredSession>({
-    nickname: state.nickname,
-    roomKey: state.roomKey,
-    resumeToken: state.resumeToken,
-  });
-
-  const clearRetry = () => {
-    if (retryTimer.current !== null) {
-      window.clearTimeout(retryTimer.current);
-      retryTimer.current = null;
-    }
-  };
-
-  const scheduleRetry = () => {
-    clearRetry();
-    dispatch({ type: "connection", status: "RECONNECTING" });
-    const delay = BACKOFF_MS[Math.min(retryAttempt.current, BACKOFF_MS.length - 1)];
-    retryAttempt.current += 1;
-    retryTimer.current = window.setTimeout(() => {
-      const session = sessionRef.current;
-      openSocket(
-        { type: "resume", name: session.nickname, room_key: session.roomKey, resume_token: session.resumeToken },
-        true,
-      );
-    }, delay);
-  };
-
-  const handleClose = (resumeAttempt: boolean) => {
-    if (explicitLeave.current) return;
-    if (resumeAttempt) {
-      if (serverRejection.current) {
-        // Server explicitly rejected the resume: session is gone.
-        joined.current = false;
-        clearStoredSession();
-        dispatch({ type: "session", nickname: sessionRef.current.nickname, roomKey: sessionRef.current.roomKey, resumeToken: "" });
-        dispatch({ type: "connection", status: "SESSION_EXPIRED", detail: "原会话已失效。" });
-        return;
-      }
-      scheduleRetry();
-      return;
-    }
-    if (joined.current) {
-      scheduleRetry();
-      return;
-    }
-    const detail = serverRejection.current || "无法连接服务器";
-    dispatch({ type: "connection", status: "ERROR", detail });
-  };
-
-  const openSocket = (firstMessage: ClientMessage, resumeAttempt: boolean) => {
-    serverRejection.current = "";
-    const next = openGameSocket({
-      onOpen: () => sendMessage(next, firstMessage),
-      onMessage: (message) => {
-        if (message.type === "error" && !joined.current) serverRejection.current = message.detail;
-        if (message.type === "joined" || message.type === "resumed") {
-          if (message.protocol_version !== PROTOCOL_VERSION) {
-            dispatch({ type: "connection", status: "ERROR", detail: `协议版本不兼容：服务器 ${message.protocol_version}，客户端 ${PROTOCOL_VERSION}` });
-            next.close();
-            return;
-          }
-          joined.current = true;
-          retryAttempt.current = 0;
-          localStorage.setItem(NICKNAME_KEY, message.name);
-          sessionRef.current = { nickname: message.name, roomKey: sessionRef.current.roomKey, resumeToken: message.resume_token };
-          saveStoredSession(sessionRef.current);
-          dispatch({ type: "session", ...sessionRef.current });
-          if (message.type === "joined" && !message.role && !message.view_role && message.roles[0]) {
-            sendMessage(next, { type: "view", role: message.roles[0].id });
-          }
-        }
-        dispatch({ type: "server", message });
-      },
-      onError: () => undefined,
-      onClose: () => handleClose(resumeAttempt),
-    });
-    socket.current = next;
-  };
-
-  const connect = (nickname: string, roomKey: string) => {
-    socket.current?.close();
-    joined.current = false;
-    explicitLeave.current = false;
-    serverRejection.current = "";
-    clearRetry();
-    retryAttempt.current = 0;
-    clearStoredSession();
-    sessionRef.current = { nickname, roomKey, resumeToken: "" };
-    dispatch({ type: "session", ...sessionRef.current });
-    dispatch({ type: "connection", status: "CONNECTING" });
-    openSocket({ type: "join", name: nickname, room_key: roomKey }, false);
-  };
-
-  const leave = () => {
-    explicitLeave.current = true;
-    clearRetry();
-    sendMessage(socket.current, { type: "leave" });
-    socket.current?.close();
-    socket.current = null;
-    joined.current = false;
-    clearStoredSession();
-    dispatch({ type: "reset" });
-  };
+  const [config, setConfig] = useState<UiConfig | null>(null);
 
   useEffect(() => {
     fetch("/ui-config.json")
       .then((response) => response.json())
-      .then((config: { font_scale?: number; room_key_required?: boolean }) => {
-        if (typeof config.font_scale === "number") {
-          document.documentElement.style.setProperty("--font-scale", String(config.font_scale));
+      .then((value: UiConfig) => {
+        if (typeof value.font_scale === "number") {
+          document.documentElement.style.setProperty("--font-scale", String(value.font_scale));
         }
-        dispatch({ type: "ui_config", roomKeyRequired: config.room_key_required !== false });
+        setConfig(value);
       })
-      .catch(() => undefined);
+      .catch(() => setConfig({ platform_mode: true }));
   }, []);
 
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    const session = loadStoredSession();
-    if (session) {
-      sessionRef.current = session;
-      dispatch({ type: "session", ...session });
-      openSocket({ type: "resume", name: session.nickname, room_key: session.roomKey, resume_token: session.resumeToken }, true);
-    }
-    return () => {
-      clearRetry();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!state.role || state.connection !== "CONNECTED" || state.players[state.role]?.status !== "EDITING") return;
-    const timer = window.setTimeout(() => sendMessage(socket.current, { type: "action", text: state.actionDraft }), 250);
-    return () => window.clearTimeout(timer);
-  }, [state.actionDraft, state.connection, state.role, state.players]);
-
-  const send = (message: ClientMessage) => {
-    if (!sendMessage(socket.current, message)) {
-      dispatch({ type: "connection", status: "RECONNECTING" });
-    }
-  };
-  const sendChat = () => {
-    if (state.connection !== "CONNECTED") return;
-    const text = state.chatDraft.trim();
-    if (!text) return;
-    send({ type: "room_chat", text });
-    dispatch({ type: "chat_draft", text: "" });
-  };
-
-  const inGame = state.connection === "CONNECTED" || state.connection === "RECONNECTING"
-    || (joined.current && state.connection === "CONNECTING");
-  if (!inGame) {
-    return <JoinScreen initialName={state.nickname} initialRoomKey={state.roomKey}
-      roomKeyRequired={state.roomKeyRequired} connection={state.connection}
-      errors={state.errors} onJoin={connect} />;
+  if (!config) {
+    return <main className="join-shell"><div className="join-card">
+      <h1>AI RP Engine</h1><p className="muted">正在连接平台…</p>
+    </div></main>;
   }
-  return <GameScreen state={state} send={send} setAction={(text) => dispatch({ type: "action_draft", text })}
-    setChat={(text) => dispatch({ type: "chat_draft", text })} sendChat={sendChat} leave={leave}
-    setTab={(tab) => dispatch({ type: "mobile_tab", tab })} />;
+  if (!config.platform_mode) return <GameApp />;
+  return <PlatformApp
+    allowRegistration={config.allow_registration !== false}
+    roleCounts={roleCounts(config.min_role_count, config.max_role_count)} />;
+}
+
+/** 2/3/4 role counts, bounded by the deployment limits. */
+function roleCounts(minimum?: number, maximum?: number): number[] {
+  const low = typeof minimum === "number" && minimum >= 1 ? minimum : 2;
+  const high = typeof maximum === "number" && maximum >= low ? maximum : 4;
+  const values: number[] = [];
+  for (let count = low; count <= high; count += 1) values.push(count);
+  return values.length ? values : DEFAULT_ROLE_COUNTS;
+}
+
+function PlatformApp({ allowRegistration, roleCounts: counts }: {
+  allowRegistration: boolean;
+  roleCounts: number[];
+}) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [checked, setChecked] = useState(false);
+  // `templates` = usable Scripts (own + public) for the Create Room selector;
+  // `publicTemplates` = the 剧本广场 list (public only).
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [publicTemplates, setPublicTemplates] = useState<TemplateItem[]>([]);
+  const [myTemplates, setMyTemplates] = useState<TemplateItem[]>([]);
+  const [games, setGames] = useState<GameItem[]>([]);
+  const [rooms, setRooms] = useState<RoomItem[]>([]);
+  const [activeRoom, setActiveRoom] = useState<{ code: string; password: string } | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const requestId = useRef(0);
+
+  const clearMessages = () => { setError(""); setNotice(""); };
+
+  const loadTemplates = async () => {
+    const [available, plaza, mine] = await Promise.all([
+      apiGet<{ templates: TemplateItem[] }>("/api/templates"),
+      apiGet<{ templates: TemplateItem[] }>("/api/templates/public"),
+      apiGet<{ templates: TemplateItem[] }>("/api/templates/mine"),
+    ]);
+    if (available.ok) setTemplates(available.data.templates);
+    if (plaza.ok) setPublicTemplates(plaza.data.templates);
+    if (mine.ok) setMyTemplates(mine.data.templates);
+    return available.ok ? "" : available.error;
+  };
+  const loadGames = async () => {
+    const result = await apiGet<{ games: GameItem[] }>("/api/games");
+    if (result.ok) setGames(result.data.games);
+    return result.ok ? "" : result.error;
+  };
+  const refreshRooms = async () => {
+    const result = await apiGet<{ rooms: RoomItem[] }>("/api/rooms");
+    if (result.ok) setRooms(result.data.rooms);
+    else setError(result.error);
+  };
+  const refreshAll = async () => {
+    const id = ++requestId.current;
+    const [templatesError, gamesError, roomResult] = await Promise.all([
+      loadTemplates(), loadGames(), apiGet<{ rooms: RoomItem[] }>("/api/rooms"),
+    ]);
+    if (id !== requestId.current) return;
+    if (roomResult.ok) setRooms(roomResult.data.rooms);
+    setError(templatesError || gamesError || (roomResult.ok ? "" : roomResult.error));
+  };
+
+  useEffect(() => { fetch("/api/me").then(async (response) => {
+    if (response.ok) setUser(await response.json() as AuthUser);
+  }).finally(() => setChecked(true)); }, []);
+  useEffect(() => {
+    if (user && !activeRoom) void refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, activeRoom]);
+
+  const authenticate = async (mode: "login" | "register", username: string, password: string) => {
+    try {
+      const response = await fetch(`/api/${mode}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const body = await response.json() as Partial<AuthUser> & { detail?: string; error?: string };
+      if (!response.ok) return humanizeError(body.error, body.detail);
+      setUser({ id: Number(body.id), username: String(body.username) });
+      return null;
+    } catch { return "无法连接服务器"; }
+  };
+
+  /** Runs one resource action: busy flag, error capture, then a refresh. */
+  const run = async (
+    action: () => Promise<{ ok: true; data: unknown } | { ok: false; error: string }>,
+    after?: string,
+  ): Promise<boolean> => {
+    clearMessages();
+    setBusy(true);
+    const result = await action();
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    await refreshAll();
+    if (after) setNotice(after);
+    return true;
+  };
+
+  const createRoom = async (body: object) => {
+    clearMessages();
+    setBusy(true);
+    const result = await apiPost<{ code?: string }>("/api/rooms", body);
+    setBusy(false);
+    if (!result.ok) { setError(result.error); return false; }
+    const code = result.data.code;
+    if (!code) { setError("创建房间失败"); return false; }
+    setActiveRoom({ code, password: String((body as { password?: string }).password ?? "") });
+    return true;
+  };
+
+  const searchRoom = async (code: string) => {
+    clearMessages();
+    const result = await apiGet<RoomItem>(`/api/rooms/${encodeURIComponent(code)}`);
+    if (!result.ok) { setError(result.error); return null; }
+    return result.data;
+  };
+
+  const closeRoom = async (code: string) => {
+    clearMessages();
+    const result = await apiDelete<{ ok: boolean }>(`/api/rooms/${code}`);
+    if (!result.ok) { setError(result.error); return; }
+    await refreshAll();
+  };
+
+  const logout = () => {
+    void fetch("/api/logout", { method: "POST" }).finally(() => {
+      setUser(null);
+      setTemplates([]); setPublicTemplates([]); setMyTemplates([]);
+      setGames([]); setRooms([]);
+      clearMessages();
+    });
+  };
+
+  const renameGame = async (game: GameItem, name: string) => {
+    await run(() => apiPatch<GameItem>(`/api/games/${game.id}`, { name }), `已重命名为「${name}」。`);
+  };
+  const copyGame = async (game: GameItem) => {
+    await run(() => apiPost<GameItem>(`/api/games/${game.id}/copy`), "存档已复制。");
+  };
+  const deleteGame = async (game: GameItem) => {
+    await run(() => apiDelete<{ ok: boolean }>(`/api/games/${game.id}`), "存档已删除。");
+  };
+  const createTemplate = async (name: string, roleCount: number) => {
+    await run(
+      () => apiPost<TemplateItem>("/api/templates", { name, role_count: roleCount }),
+      "剧本已创建（默认私有）。",
+    );
+  };
+  const renameTemplate = async (template: TemplateItem, name: string) => {
+    await run(
+      () => apiPatch<TemplateItem>(`/api/templates/${template.id}`, { name }),
+      `已重命名为「${name}」。`,
+    );
+  };
+  /** Detail overlay data comes from GET /api/templates/<id> (introduction/tags). */
+  const loadTemplateDetail = async (template: TemplateItem): Promise<TemplateItem | null> => {
+    clearMessages();
+    const result = await apiGet<TemplateItem>(`/api/templates/${template.id}`);
+    if (!result.ok) { setError(result.error); return null; }
+    return result.data;
+  };
+  const toggleTemplateVisibility = async (template: TemplateItem, isPublic: boolean) => {
+    await run(
+      () => apiPatch<TemplateItem>(`/api/templates/${template.id}`, { is_public: isPublic }),
+      isPublic
+        ? "剧本已设为公开，所有用户都能在「剧本广场」中看到它。"
+        : "剧本已设为私密，只有你自己可用。",
+    );
+  };
+  const copyTemplate = async (template: TemplateItem) => {
+    await run(() => apiPost<TemplateItem>(`/api/templates/${template.id}/copy`), "剧本已复制。");
+  };
+  const deleteTemplate = async (template: TemplateItem) => {
+    await run(
+      () => apiDelete<{ ok: boolean }>(`/api/templates/${template.id}`),
+      "剧本已删除，已有存档不受影响。",
+    );
+  };
+
+  if (!checked) {
+    return <main className="join-shell"><div className="join-card">
+      <h1>AI RP Engine</h1><p className="muted">正在检查登录状态…</p>
+    </div></main>;
+  }
+  if (!user) return <AuthScreen allowRegistration={allowRegistration} onSubmit={authenticate} />;
+  if (activeRoom) {
+    return <GameApp platformRoom={activeRoom} onPlatformLeave={() => {
+      setActiveRoom(null);
+      setNotice(`已于 ${formatLocalTime(new Date().toISOString())} 离开房间。`);
+    }} />;
+  }
+  return <PlatformHome
+    userId={user.id} username={user.username} roleCounts={counts}
+    templates={templates} publicTemplates={publicTemplates}
+    myTemplates={myTemplates} games={games} rooms={rooms}
+    error={error} notice={notice} busy={busy}
+    onLogout={logout}
+    onRefreshRooms={refreshRooms}
+    onCreate={createRoom}
+    onJoin={(room, password) => setActiveRoom({ code: room.code, password })}
+    onCloseRoom={closeRoom}
+    onSearch={searchRoom}
+    onRenameGame={renameGame} onCopyGame={copyGame} onDeleteGame={deleteGame}
+    onCreateTemplate={createTemplate} onRenameTemplate={renameTemplate}
+    onToggleTemplateVisibility={toggleTemplateVisibility}
+    onLoadTemplateDetail={loadTemplateDetail}
+    onCopyTemplate={copyTemplate} onDeleteTemplate={deleteTemplate} />;
 }

@@ -1,4 +1,5 @@
-import type { PlayerState, Role, RoleDefinition, RoomMessage, ServerMessage, StoryEntry } from "./protocol";
+import { humanizeError } from "./errors";
+import type { AuthUser, PlayerState, Role, RoleDefinition, RoomMessage, ServerMessage, StoryEntry } from "./protocol";
 
 export type ConnectionStatus =
   | "DISCONNECTED"
@@ -6,22 +7,26 @@ export type ConnectionStatus =
   | "CONNECTED"
   | "RECONNECTING"
   | "SESSION_EXPIRED"
+  | "UNAUTHENTICATED"
   | "ERROR";
 
 export type MobileTab = "story" | "chat";
 
 export type ClientState = {
+  authChecked: boolean;
+  authUser: AuthUser | null;
+  isHost: boolean;
   connection: ConnectionStatus;
-  nickname: string;
   roomKey: string;
   roomKeyRequired: boolean;
+  allowRegistration: boolean;
   resumeToken: string;
   roles: RoleDefinition[];
   role: Role | null;
   viewRole: Role | null;
   characterName: string;
   scenario: string;
-  presence: Array<{ name: string; role: Role | null; connected?: boolean }>;
+  presence: Array<{ user_id?: number; name: string; role: Role | null; connected?: boolean }>;
   players: Partial<Record<Role, PlayerState>>;
   round: number | null;
   processingStage: string | null;
@@ -37,19 +42,22 @@ export type ClientState = {
 };
 
 export const initialState: ClientState = {
-  connection: "DISCONNECTED", nickname: "", roomKey: "", roomKeyRequired: true, resumeToken: "",
-  roles: [], role: null, viewRole: null, characterName: "", scenario: "", presence: [],
-  players: {}, round: null, processingStage: null, opening: "", storyEntries: [],
-  actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
+  authChecked: false, authUser: null, isHost: false,
+  connection: "DISCONNECTED", roomKey: "", roomKeyRequired: true, allowRegistration: true,
+  resumeToken: "", roles: [], role: null, viewRole: null, characterName: "", scenario: "",
+  presence: [], players: {}, round: null, processingStage: null, opening: "",
+  storyEntries: [], actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
   chatUnread: 0, errors: [], notices: [],
 };
 
 export type ClientAction =
+  | { type: "auth_checked" }
+  | { type: "auth"; user: AuthUser }
+  | { type: "auth_lost"; detail?: string }
   | { type: "connection"; status: ConnectionStatus; detail?: string }
-  | { type: "nickname"; nickname: string }
   | { type: "room_key"; roomKey: string }
-  | { type: "session"; nickname: string; roomKey: string; resumeToken: string }
-  | { type: "ui_config"; roomKeyRequired: boolean }
+  | { type: "session"; roomKey: string; resumeToken: string }
+  | { type: "ui_config"; roomKeyRequired: boolean; allowRegistration: boolean }
   | { type: "action_draft"; text: string }
   | { type: "chat_draft"; text: string }
   | { type: "mobile_tab"; tab: MobileTab }
@@ -57,14 +65,31 @@ export type ClientAction =
   | { type: "reset" };
 
 export function reducer(state: ClientState, action: ClientAction): ClientState {
-  if (action.type === "reset") return initialState;
-  if (action.type === "nickname") return { ...state, nickname: action.nickname };
+  if (action.type === "reset") return { ...initialState, authChecked: true };
+  if (action.type === "auth_checked") return { ...state, authChecked: true };
+  if (action.type === "auth") {
+    return { ...state, authChecked: true, authUser: action.user, errors: [] };
+  }
+  if (action.type === "auth_lost") {
+    return {
+      ...state,
+      authChecked: true,
+      authUser: null,
+      isHost: false,
+      resumeToken: "",
+      errors: action.detail ? [...state.errors, action.detail] : state.errors,
+    };
+  }
   if (action.type === "room_key") return { ...state, roomKey: action.roomKey };
   if (action.type === "session") {
-    return { ...state, nickname: action.nickname, roomKey: action.roomKey, resumeToken: action.resumeToken };
+    return { ...state, roomKey: action.roomKey, resumeToken: action.resumeToken };
   }
   if (action.type === "ui_config") {
-    return { ...state, roomKeyRequired: action.roomKeyRequired };
+    return {
+      ...state,
+      roomKeyRequired: action.roomKeyRequired,
+      allowRegistration: action.allowRegistration,
+    };
   }
   if (action.type === "action_draft") return { ...state, actionDraft: action.text };
   if (action.type === "chat_draft") return { ...state, chatDraft: action.text };
@@ -82,13 +107,17 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
   const message = action.message;
   switch (message.type) {
     case "joined":
-      return { ...state, connection: "CONNECTED", nickname: message.name, role: message.role,
-        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token,
-        roles: message.roles };
+      return { ...state, connection: "CONNECTED", authUser: message.user, isHost: message.is_host,
+        role: message.role, viewRole: message.view_role, scenario: message.scenario,
+        resumeToken: message.resume_token, roles: message.roles };
     case "resumed":
-      return { ...state, connection: "CONNECTED", nickname: message.name, role: message.role,
-        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token,
-        roles: message.roles };
+      return { ...state, connection: "CONNECTED", authUser: message.user, isHost: message.is_host,
+        role: message.role, viewRole: message.view_role, scenario: message.scenario,
+        resumeToken: message.resume_token, roles: message.roles };
+    case "session_replaced":
+      return { ...state, connection: "DISCONNECTED", notices: [...state.notices, message.detail] };
+    case "room_closed":
+      return { ...state, connection: "DISCONNECTED", notices: [...state.notices, message.detail] };
     case "presence":
       return { ...state, presence: message.users };
     case "identity_changed":
@@ -120,9 +149,21 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
     case "round_complete":
       return { ...state, processingStage: null };
     case "error":
-      return { ...state, errors: [...state.errors, message.detail] };
+      return {
+        ...state,
+        errors: [...state.errors, humanizeError(message.code, message.detail)],
+      };
     case "notice":
       return { ...state, notices: [...state.notices, message.detail ?? message.text ?? ""] };
+    case "kicked":
+      return {
+        ...state,
+        role: null,
+        viewRole: null,
+        isHost: false,
+        connection: "DISCONNECTED",
+        errors: [...state.errors, message.reason || "你已被房主移出房间"],
+      };
     case "role_assigned":
       return state;
   }

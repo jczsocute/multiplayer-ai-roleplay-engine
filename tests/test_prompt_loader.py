@@ -3,9 +3,9 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from server.llm.client import LLMClient
-from server.llm.prompt_loader import PromptLoader
-from server.roles import RoleConfig
+from server.gameserver.llm.client import LLMClient
+from server.gameserver.llm.prompt_loader import PromptLoader
+from server.gameserver.roles import RoleConfig
 
 
 class FakeCompletions:
@@ -38,9 +38,10 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.loader.character_name("P2"), "周砚")
         self.assertIn("暴雨", self.loader.opening("P1"))
         self.assertIn("机房", self.loader.opening("P2"))
-        roles = self.loader.json("roles.json")
-        self.assertEqual(roles["count"], 2)
-        self.assertEqual(len(roles["names"]), roles["count"])
+        payload = self.loader.json("metadata.json")
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(len(payload["names"]), payload["count"])
+        self.assertTrue(payload["introduction"])
         self.assertIn("生命状态", self.loader.statusbar("P1"))
         self.assertIn("通信设备", self.loader.statusbar("P2"))
         self.assertNotEqual(

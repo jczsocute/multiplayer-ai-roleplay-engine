@@ -1,124 +1,67 @@
-# AI RP Engine Development Guide
+# AI RP Engine — Developer / Agent Guide
 
-## Project Goal
+This file contains editing rules. Read the root [README](README.md) for startup,
+[Platform README](server/platform/README.md) before changing platform behavior,
+and [GameServer README](server/gameserver/README.md) before changing a game runtime.
+Keep the relevant document in sync with behavior changes.
 
-This project implements a lightweight multiplayer AI role-playing engine.
+## Boundaries
 
-Two players connect through terminal clients via SSH and interact in a shared AI-managed world.
+- `server/platform/` owns accounts, `platform.db`, catalog payload operations,
+  Lobby/API routing, RoomManager, Admin and the legacy web adapter.
+- `server/gameserver/` owns one game's protocol, sessions, roles, rounds,
+  `game.db`, story, recovery and LLM pipeline. It must not query `platform.db`,
+  know RoomManager or room codes, or add `room_id` to its SQL tables.
+- `server/main.py` is the platform and maintenance CLI. Normal startup must work
+  with no owner, catalog entries, Game or LLM configuration.
+- Platform metadata remains in `platform.db`; Template and Game payloads remain
+  on disk. Template → Game is a filesystem snapshot, never a live reference.
+- Web is the user entry point. `client/admin.py` is loopback only platform
+  management, not a player or Host client. Keep the explicit legacy `--game`
+  compatibility path isolated from normal Platform startup.
 
-The first version focuses on:
-- two-player collaboration
-- natural language input
-- AI-managed world state
-- different player perspectives
-- terminal interaction
+## Runtime invariants
 
-## Core Architecture
+- `world_state` is canonical. WorldUpdater produces a new world, public data,
+  views and statusbars; Narrator sees only public data and its role's view,
+  statusbar, character sheet and bounded history. Room Chat never enters AI
+  context or persisted story history.
+- Runtime role IDs are derived `P1..PN` from payload `metadata.json`; never add
+  fixed Player A/B logic. Current deployment accepts 2–4 roles, while the core
+  supports dynamic N-role.
+- `metadata.json` holds `count`, `names`, `title`, `introduction`, `tags`. Only
+  `server/gameserver/roles.py` loads or writes it. `roles.json` is solely an
+  input to the idempotent legacy migration; do not create new payloads with it.
+- A user is identified by `user_id`, never username. Host capability is checked
+  server-side against `owner_user_id`, independently of role assignment.
+- Maintain one linear timeline. Retry fully reruns a round with preserved
+  actions; rollback physically removes later rounds. Do not add branches,
+  revisions, soft deletion or partial recovery checkpoints.
+- Keep Room capacity, disconnect grace, kick, close and `user_room` membership
+  in Platform. GameServer gets callbacks and owner capability, not platform IDs.
+- Use the shared Starlette adapter in `server/platform/websocket_adapter.py` for
+  both web shells. When changing the factory or adapter, run the live smoke
+  flow (register → import → create Room → join → close) as well as tests.
+- Prefer direct API calls, simple functions and SQLite. Do not add an ORM,
+  migration framework, event sourcing or agent framework.
 
-The system has three layers:
+## Repository content
 
-1. World Layer
-- Maintains objective world state.
-- Managed by World Update LLM.
+- Commit only `templates/default/` under `templates/`. `data/`, `games/`,
+  other templates, SQLite sidecars, credentials, logs and local `.env` files
+  are runtime/user data. Never delete local data merely to clean Git; untrack
+  it from the index if necessary.
+- Keep synthetic tests and fixtures in `tests/`. `web/dist/` is a tracked
+  production build; rebuild it after Web changes.
+- User-facing Chinese calls a Template “剧本”. Keep internal identifiers
+  (`Template`, `template_id`, `templates`, `/api/templates`) unchanged.
+- Map protocol error codes to Chinese in the Web presentation layer; keep
+  protocol names and database columns in English.
 
-2. Player View Layer
-- Generates what each player knows.
+## Checks
 
-3. Narration Layer
-- Generates player-facing text.
-
-The world state is the source of truth.
-Chat history is a rendered record, not the world itself.
-
-## Important Design Rules
-
-Keep it lightweight.
-
-Avoid:
-- LangChain
-- LangGraph
-- AutoGen
-- complex agent frameworks
-
-Direct API calls are preferred.
-
-AI handles:
-- natural language understanding
-- world state updates
-- narrative generation
-
-Python handles:
-- networking
-- round management
-- persistence
-- state transitions
-
-## Multiplayer Model
-
-Current supported players:
-- Player A
-- Player B
-
-Each round:
-1. Players edit their actions.
-2. Players submit.
-3. When all players submit:
-   - lock the round
-   - call World Update AI
-   - generate player-specific responses
-   - store results
-4. Start next round.
-
-## Player Status
-
-Allowed states:
-
-EDITING:
-Player is writing.
-
-READY:
-Player submitted action.
-
-PAUSED:
-Player temporarily unavailable.
-
-PROCESSING:
-AI generation in progress.
-
-## Storage
-
-Use SQLite.
-
-Do not use event sourcing.
-
-Do not create unnecessary event models.
-
-Store:
-- current world state
-- player states
-- chat history
-- rounds
-
-## Repository Content Boundaries
-
-Do not commit anything under `games/`. Game instances contain runtime state and
-personal play content.
-
-Under `templates/`, commit only `templates/default/`. Every other scenario
-template is personal creative content and must remain untracked.
-
-Do not force-add ignored game instances or personal scenario templates.
-
-## Coding Style
-
-Prefer:
-- simple functions
-- clear names
-- small modules
-
-Avoid:
-- over abstraction
-- unnecessary classes
-
-The project is a prototype.
-Optimize for iteration speed.
+```bash
+python -m unittest discover
+cd web && npx vitest run && npx tsc -b && npm run build
+git diff --check
+```

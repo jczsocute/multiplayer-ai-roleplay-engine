@@ -8,9 +8,10 @@ export type SocketHandlers = {
   onClose: () => void;
 };
 
-export function openGameSocket(handlers: SocketHandlers): WebSocket {
+export function openGameSocket(handlers: SocketHandlers, roomCode?: string): WebSocket {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+  const query = roomCode ? `?room=${encodeURIComponent(roomCode)}` : "";
+  const socket = new WebSocket(`${protocol}//${location.host}/ws${query}`);
   socket.addEventListener("open", handlers.onOpen);
   socket.addEventListener("message", (event) => {
     try {
