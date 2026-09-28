@@ -139,6 +139,10 @@ class Database:
     ) -> None:
         await asyncio.to_thread(self._save_world_update_sync, completed, result)
 
+    async def lock_round_actions(self, completed: CompletedRound) -> None:
+        """Persist submitted actions before the first AI request can fail."""
+        await asyncio.to_thread(self._lock_round_actions_sync, completed)
+
     async def save_player_views(self, round_id: int, views: dict[str, str]) -> None:
         await asyncio.to_thread(self._save_player_views_sync, round_id, views)
 
@@ -377,6 +381,19 @@ class Database:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE rounds SET stage = ? WHERE round_number = ?", (stage, round_id)
+            )
+
+    def _lock_round_actions_sync(self, completed: CompletedRound) -> None:
+        with self._connect() as connection:
+            connection.executemany(
+                """INSERT INTO round_actions (round_id, player_id, content)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(round_id, player_id) DO UPDATE SET
+                       content = excluded.content""",
+                (
+                    (completed.round_number, role_id, completed.actions[role_id])
+                    for role_id in self.role_ids
+                ),
             )
 
     def _get_recovery_data_sync(self, round_id: int) -> dict:

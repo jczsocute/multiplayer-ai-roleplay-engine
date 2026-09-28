@@ -10,8 +10,9 @@ from typing import Awaitable, Callable
 
 from server.gameserver.factory import load_game_server
 from server.gameserver.game_server import GameServer
+from server.gameserver.roles import RoleConfig
 from server.platform.auth import hash_password
-from server.platform.catalog import create_game_snapshot
+from server.platform.catalog import create_game_snapshot, delete_game
 from server.platform.database import PlatformDatabase, generate_room_code
 from server.platform.models import AuthenticatedUser, RoomMetadata
 
@@ -40,6 +41,8 @@ class RoomManager:
         templates_dir: str | Path = "templates",
         game_factory: GameFactory = load_game_server,
         max_users: int = DEFAULT_MAX_ROOM_USERS,
+        min_role_count: int = 2,
+        max_role_count: int = 4,
     ) -> None:
         if max_users < 1:
             raise ValueError("max_users must be a positive integer")
@@ -48,6 +51,8 @@ class RoomManager:
         self.templates_dir = Path(templates_dir)
         self.game_factory = game_factory
         self.max_users = max_users
+        self.min_role_count = min_role_count
+        self.max_role_count = max_role_count
         self.rooms: dict[str, RoomRuntime] = {}
         self.user_room: dict[int, str] = {}
         self._user_connection: dict[int, object] = {}
@@ -91,12 +96,22 @@ class RoomManager:
             raise ValueError("template_not_found")
         if template.owner_user_id != owner.id and not template.is_public:
             raise PermissionError("forbidden")
+        if any(room.owner_user_id == owner.id for room in self.database.list_rooms()):
+            raise ValueError("owner_already_has_room")
+        RoleConfig.load(
+            self.templates_dir / template_id,
+            min_count=self.min_role_count, max_count=self.max_role_count,
+        )
         name = game_name.strip() or f"{template.name} - Game"
         game = create_game_snapshot(
             self.database, template_id, owner.id, name,
             self.templates_dir, self.games_dir,
         )
-        return await self._create(owner.id, game.id, password)
+        try:
+            return await self._create(owner.id, game.id, password)
+        except Exception:
+            delete_game(self.database, game.id, owner.id, self.games_dir)
+            raise
 
     async def _create(self, owner_id: int, game_id: str, password: str) -> RoomRuntime:
         password_hash, salt = _password_values(password)
@@ -146,7 +161,9 @@ class RoomManager:
         runtime = self.rooms.get(room_code)
         if runtime is None:
             return
-        await self.leave(user_id, room_code)
+        # GameServer already closed an evicted member's socket. Drop only the
+        # reservation here, so an HTTP leave never attempts a second close.
+        await self.leave(user_id, room_code, self._user_connection.get(user_id))
         if user_id == runtime.owner_user_id:
             logger.info("Room %s owner timed out; closing the Room", room_code)
             try:
@@ -193,7 +210,21 @@ class RoomManager:
                 if connection is None:
                     connection_to_close = active
         if connection_to_close is not None and hasattr(connection_to_close, "close"):
-            await connection_to_close.close(code=1000)
+            try:
+                await connection_to_close.close(code=1000)
+            except Exception:
+                logger.debug("Member socket was already closed")
+
+    async def leave_member(self, user_id: int, room_code: str) -> None:
+        """Authoritative explicit leave: remove the game participant and seat."""
+        code = room_code.upper()
+        if self.user_room.get(user_id) != code:
+            return
+        runtime = self.get_runtime(code)
+        if runtime is not None:
+            await runtime.game_server.leave_user(user_id)
+        # Also handles a reservation whose game session is already gone.
+        await self.leave(user_id, code)
 
     async def release_if_gone(
         self, user_id: int, room_code: str, connection: object | None = None
@@ -264,14 +295,12 @@ class RoomManager:
         """Full Room detail for the local Admin console (never sent to players)."""
         runtime = self.get_runtime(code)
         room = self.database.get_room(code.upper())
-        if runtime is None or room is None:
+        if room is None:
             return None
         game = self.database.get_game(room.game_id)
         owner = self.database.user_by_id(room.owner_user_id)
         password = self.database.get_room_password(room.code)
-        presence = await runtime.game_server.sessions.presence_snapshot()
-        game_server = runtime.game_server
-        return {
+        detail = {
             "code": room.code,
             "game_id": room.game_id,
             "game_name": game.name if game else room.game_id,
@@ -280,6 +309,13 @@ class RoomManager:
             "has_password": bool(password and password[0]),
             "occupancy": self.occupancy(room.code),
             "max_users": self.max_users,
+            "runtime_status": "RUNNING" if runtime is not None else "RECOVERY_FAILED",
+        }
+        if runtime is None:
+            return detail
+        presence = await runtime.game_server.sessions.presence_snapshot()
+        game_server = runtime.game_server
+        detail.update({
             "role_count": len(game_server.role_ids),
             "connected_count": sum(
                 1 for user in presence["users"] if user.get("connected")
@@ -297,11 +333,12 @@ class RoomManager:
             "round": game_server.rounds.round_number,
             "stage": game_server.rounds.stage.value,
             "has_room_key": bool(game_server.room_key),
-        }
+        })
+        return detail
 
     async def list_admin_rooms(self) -> list[dict]:
         values = []
-        for code in sorted(self.rooms):
+        for code in sorted(room.code for room in self.database.list_rooms()):
             room = await self.admin_room(code)
             if room is not None:
                 values.append(room)

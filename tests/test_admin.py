@@ -202,6 +202,15 @@ class AdminUserCommandTests(AdminFixture):
             self.assertIn("Games", blocked["detail"])
             self.assertIn("Active Room", blocked["detail"])
 
+    def test_delete_member_of_another_users_room_is_refused(self) -> None:
+        carol = self.database.create_user("Carol", "password123")
+        asyncio.run(self.manager.enter(carol.id, self.room.code, object()))
+        with self.client() as client, admin_session(client) as ws:
+            blocked = command(ws, {"type": "delete-user", "username": "Carol"})
+        self.assertEqual(blocked["code"], "user_in_room")
+        self.assertIn("仍在房间中", blocked["detail"])
+        self.assertIsNotNone(self.database.user_by_username("Carol"))
+
     def test_delete_user_removes_sessions(self) -> None:
         with self.client() as client, admin_session(client) as ws:
             carol = self.database.create_user("Carol", "password123")
@@ -308,6 +317,17 @@ class AdminTemplateCommandTests(AdminFixture):
 
 
 class AdminRoomCommandTests(AdminFixture):
+    def test_recovery_failed_room_can_be_listed_and_closed(self) -> None:
+        self.manager.rooms.pop(self.room.code)
+        with self.client() as client, admin_session(client) as ws:
+            listing = command(ws, {"type": "rooms"})["data"]["rooms"]
+            self.assertEqual(listing[0]["runtime_status"], "RECOVERY_FAILED")
+            detail = command(ws, {"type": "room", "code": self.room.code})["data"]
+            self.assertEqual(detail["game_id"], self.game.id)
+            self.assertEqual(command(ws, {"type": "close-room", "code": self.room.code})["type"], "ok")
+        self.assertIsNone(self.database.get_room(self.room.code))
+        self.assertIsNotNone(self.database.get_game(self.game.id))
+
     def test_list_detail_and_admin_close(self) -> None:
         socket = FakeConnection()
         asyncio.run(self.room.game_server.sessions.join(self.bob, socket))

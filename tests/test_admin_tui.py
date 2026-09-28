@@ -159,6 +159,21 @@ class AdminTuiConsoleTests(unittest.IsolatedAsyncioTestCase):
             await self.type_command(pilot, "/help")
             self.assertEqual(client.commands(), ["room"])
 
+    async def test_recovery_failed_room_detail_is_rendered(self) -> None:
+        client = FakeAdminClient(data={**USERS, "room": {
+            "code": "AB12", "owner_username": "Bob", "game_name": "Save",
+            "game_id": "game_A", "has_password": False,
+            "runtime_status": "RECOVERY_FAILED",
+        }})
+        app = AdminApp(client)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await self.open_console(pilot, client)
+            await self.type_command(pilot, "room ab12")
+            rendered = "\n".join(
+                str(line) for line in app.screen.query_one("#admin-content", RichLog).lines
+            )
+            self.assertIn("恢复失败", rendered)
+
     async def test_close_room_requires_confirmation(self) -> None:
         client = FakeAdminClient(data=USERS)
         app = AdminApp(client)

@@ -13,7 +13,7 @@ from server.gameserver.roles import (
     LEGACY_ROLES_FILENAME, METADATA_FILENAME, RoleConfig, load_template_metadata,
 )
 from server.platform.catalog import (
-    create_game_snapshot, describe_template, import_template, load_payload_metadata,
+    create_game_snapshot, describe_template, import_game, import_template, load_payload_metadata,
     migrate_catalog_payloads,
 )
 from server.platform.database import PlatformDatabase
@@ -46,7 +46,7 @@ class CatalogMigrationTests(unittest.TestCase):
         shutil.copytree(Path("templates/default"), payload)
         (payload / METADATA_FILENAME).unlink()
         write_legacy(payload, 2, ("林承", "周璐"))
-        # Import migrates the source, so build the registration by hand instead.
+        # Registered legacy payloads are constructed directly for startup migration.
         template_id = "tmpl_LEGACY"
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(payload, self.templates_dir / template_id)
@@ -191,6 +191,19 @@ class CatalogMigrationTests(unittest.TestCase):
         self.assertEqual(metadata.count, 3)
         self.assertEqual(metadata.introduction, "从旧格式导入")
         self.assertEqual(metadata.tags, ("合作",))
+        self.assertTrue((source / LEGACY_ROLES_FILENAME).is_file())
+        self.assertFalse((source / METADATA_FILENAME).exists())
+
+    def test_import_game_migrates_only_the_copy(self) -> None:
+        source = self.root / "sources" / "old_game"
+        write_legacy(source, 2, ("甲", "乙"))
+        imported = import_game(
+            self.database, source, self.games_dir, self.alice.id, "Old Game"
+        )
+        self.assertTrue((source / LEGACY_ROLES_FILENAME).is_file())
+        self.assertFalse((source / METADATA_FILENAME).exists())
+        self.assertTrue((self.games_dir / imported.id / METADATA_FILENAME).is_file())
+        self.assertFalse((self.games_dir / imported.id / LEGACY_ROLES_FILENAME).exists())
 
     def test_describe_includes_tags_always_and_introduction_on_request(self) -> None:
         template = import_template(

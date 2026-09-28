@@ -13,14 +13,14 @@ Status: `Next`
 
 ## Completed
 
-### Payload migration: roles.json → metadata.json + introduction / tags
+### Payload migration: roles.json → metadata.json + title / introduction / tags
 
-- Template/Game payload 的角色配置改为 `metadata.json`：`{count, names, introduction, tags}`；
+- Template/Game payload 的角色配置改为 `metadata.json`：`{count, names, title, introduction, tags}`；
   `count` / `names` 的数据结构与角色 id 规则完全保持旧 `roles.json` 形态。
 - 统一 loader / 校验 / 写入 / 迁移收敛在 `server/gameserver/roles.py`；运行时代码不再读取
   `roles.json`（`LEGACY_ROLES_FILENAME` 只服务一次性迁移）。
 - 已登记的 Template / Game 在 Platform 启动时幂等迁移（`catalog.migrate_catalog_payloads`）；
-  import 会先迁移 legacy 源目录；legacy `--game` 只迁移显式指定的目录；未登记目录不扫描。
+  import 先复制源目录，只在副本中迁移；legacy `--game` 只迁移显式指定的目录；未登记目录不扫描。
 - 迁移写 `metadata.json.tmp` + `os.replace` 后才删除 `roles.json`；失败保留旧文件。
 - `GET /api/templates/<id>` 详情接口提供 introduction / tags / role_names（私有仅 owner 可见）；
   Template Detail overlay 显示 tags chips、剧本介绍（`pre-wrap` 纯文本）与角色列表。

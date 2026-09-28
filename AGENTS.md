@@ -39,6 +39,10 @@ Keep the relevant document in sync with behavior changes.
   revisions, soft deletion or partial recovery checkpoints.
 - Keep Room capacity, disconnect grace, kick, close and `user_room` membership
   in Platform. GameServer gets callbacks and owner capability, not platform IDs.
+- RoomManager is authoritative for same-room reconnect and explicit leave;
+  Platform Web uses the leave API, while the legacy single-game path may use
+  the game `leave` command. Any AI pipeline failure keeps actions locked until
+  the owner runs a full retry.
 - Use the shared Starlette adapter in `server/platform/websocket_adapter.py` for
   both web shells. When changing the factory or adapter, run the live smoke
   flow (register → import → create Room → join → close) as well as tests.

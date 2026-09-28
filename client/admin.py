@@ -422,16 +422,25 @@ class AdminScreen(Screen):
             self.write_line(f"已删除剧本 {data['id']}；已有存档继续正常运行。")
         elif command == "rooms":
             self.write_table(
-                "活跃房间",
+                "房间",
                 ["房间码", "存档", "房主", "在线", "密码", "回合"],
                 [
                     [r["code"], r["game_name"], r["owner_username"],
-                     f"{r['connected_count']}/{r['role_count']}",
-                     "有" if r["has_password"] else "无", str(r["round"])]
+                     (f"{r['connected_count']}/{r['role_count']}"
+                      if r.get("runtime_status") != "RECOVERY_FAILED" else "恢复失败"),
+                     "有" if r["has_password"] else "无", str(r.get("round", "—"))]
                     for r in data.get("rooms", [])
                 ],
             )
         elif command == "room":
+            if data.get("runtime_status") == "RECOVERY_FAILED":
+                self.write_line(
+                    f"房间 {data['code']}：运行时恢复失败，可用 close-room 关闭。\n"
+                    f"房主：{data['owner_username']}\n"
+                    f"存档：{data['game_name']}（{data['game_id']}）\n"
+                    f"需要密码：{'是' if data['has_password'] else '否'}"
+                )
+                return
             assignments = "，".join(
                 f"{role}→{name}" for role, name in (data.get("assignments") or {}).items()
             ) or "（无）"

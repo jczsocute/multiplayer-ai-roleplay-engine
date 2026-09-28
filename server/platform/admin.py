@@ -13,7 +13,7 @@ from pathlib import Path
 from server.platform.bootstrap import bootstrap_templates
 from server.gameserver.roles import METADATA_FILENAME
 from server.platform.catalog import (
-    delete_template_payload, has_payload, import_template, load_payload_metadata,
+    delete_owned_template, has_payload, import_template, load_payload_metadata,
     rename_template, template_role_names,
 )
 from server.platform.database import PlatformDatabase
@@ -105,6 +105,10 @@ async def execute(context: AdminContext, command: str, payload: dict) -> object:
     if command == "delete-user":
         username = _text(payload, "username")
         user_id = _user_id(database, username)
+        if context.room_manager.user_current_room(user_id) is not None:
+            raise AdminError(
+                "user_in_room", "该用户当前仍在房间中，请先将其移出房间。"
+            )
         counts = database.user_resource_counts(user_id)
         blocking = {key: value for key, value in counts.items() if value}
         if blocking:
@@ -149,10 +153,12 @@ async def execute(context: AdminContext, command: str, payload: dict) -> object:
     if command == "delete-template":
         template_id = _text(payload, "id")
         try:
-            database.delete_template(template_id)
+            delete_owned_template(
+                database, template_id, 0, context.templates_dir,
+                require_owner=False,
+            )
         except ValueError as exc:
             raise AdminError("template_not_found", f"剧本不存在：{template_id}") from exc
-        delete_template_payload(context.templates_dir, template_id)
         return {"id": template_id}
     if command == "import-template":
         owner = _text(payload, "owner")

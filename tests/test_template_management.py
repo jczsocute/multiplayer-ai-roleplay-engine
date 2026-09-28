@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from server.gameserver.roles import RoleConfig
 from server.platform.catalog import (
@@ -156,6 +157,29 @@ class TemplateManagementTests(unittest.TestCase):
             )["title"],
             "管理员改名",
         )
+
+    def test_rename_compensates_file_and_database_failures(self) -> None:
+        original = self.database.get_template(self.mine.id).name
+        with mock.patch("server.platform.catalog.set_payload_title", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                rename_template(self.database, self.mine.id, self.alice.id, "新名", self.templates_dir)
+        self.assertEqual(self.database.get_template(self.mine.id).name, original)
+        with mock.patch.object(self.database, "rename_template", side_effect=RuntimeError("db")):
+            with self.assertRaises(RuntimeError):
+                rename_template(self.database, self.mine.id, self.alice.id, "新名", self.templates_dir)
+        self.assertEqual(self.database.get_template(self.mine.id).name, original)
+        self.assertEqual(
+            json.loads((self.payload(self.mine.id) / "metadata.json").read_text())["title"],
+            original,
+        )
+
+    def test_delete_compensates_database_failure(self) -> None:
+        with mock.patch.object(self.database, "delete_template", side_effect=RuntimeError("db")):
+            with self.assertRaises(RuntimeError):
+                delete_owned_template(self.database, self.mine.id, self.alice.id, self.templates_dir)
+        self.assertIsNotNone(self.database.get_template(self.mine.id))
+        self.assertTrue(self.payload(self.mine.id).is_dir())
+        self.assertFalse((self.templates_dir / f".{self.mine.id}.deleting").exists())
 
     def test_copy_carries_the_new_title(self) -> None:
         copy = copy_template(self.database, self.mine.id, self.alice.id, self.templates_dir)

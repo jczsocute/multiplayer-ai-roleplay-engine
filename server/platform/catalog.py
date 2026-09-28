@@ -35,33 +35,32 @@ def import_template(
 ) -> TemplateRecord:
     if not source.is_dir():
         raise ValueError(f"template directory does not exist: {source}")
-    # A legacy source is migrated in place, carrying the requested title.
-    migrate_roles_to_metadata(
-        source, title=title or name, introduction=introduction, tags=tags
-    )
-    RoleConfig.load(source, min_count=1, max_count=10_000)
     template_id = _available_id(database, "tmpl")
     target = templates_dir / template_id
+    staging = templates_dir / f".{template_id}.importing"
     templates_dir.mkdir(parents=True, exist_ok=True)
     ignore = shutil.ignore_patterns(*exclude) if exclude else None
-    shutil.copytree(source, target, ignore=ignore)
-    # The imported copy is the new Script: it takes the requested title, so the
-    # source's own title never leaks into the catalog row of the copy.
-    set_payload_title(target, title or name)
     try:
-        return database.create_template(
+        shutil.copytree(source, staging, ignore=ignore)
+        migrate_roles_to_metadata(
+            staging, title=title or name, introduction=introduction, tags=tags
+        )
+        RoleConfig.load(staging, min_count=1, max_count=10_000)
+        # Only the imported copy takes the requested title.
+        set_payload_title(staging, title or name)
+        metadata = database.create_template(
             template_id, owner_user_id, name, is_public=is_public
         )
     except Exception:
-        shutil.rmtree(target)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
-
-
-def delete_template_payload(templates_dir: Path, template_id: str) -> None:
-    """Remove a Template payload directory; metadata is deleted separately."""
-    target = templates_dir / template_id
-    if target.is_dir():
-        shutil.rmtree(target)
+    try:
+        staging.rename(target)
+    except Exception:
+        database.delete_template(template_id)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return metadata
 
 
 def has_payload(root: Path) -> bool:
@@ -140,17 +139,25 @@ def import_game(
 ) -> GameMetadata:
     if not source.is_dir():
         raise ValueError(f"game directory does not exist: {source}")
-    migrate_roles_to_metadata(source)
-    RoleConfig.load(source, min_count=1, max_count=10_000)
     game_id = _available_id(database, "game")
     target = games_dir / game_id
+    staging = games_dir / f".{game_id}.importing"
     games_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, target)
     try:
-        return database.create_game(game_id, owner_user_id, name, None)
+        shutil.copytree(source, staging)
+        migrate_roles_to_metadata(staging)
+        RoleConfig.load(staging, min_count=1, max_count=10_000)
+        metadata = database.create_game(game_id, owner_user_id, name, None)
     except Exception:
-        shutil.rmtree(target)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
+    try:
+        staging.rename(target)
+    except Exception:
+        database.delete_game_metadata(game_id)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return metadata
 
 
 def _available_id(database: PlatformDatabase, prefix: str) -> str:
@@ -375,12 +382,32 @@ def rename_template(
     Admin reaches the same helper with ``require_owner=False``; only the owner
     check is skipped, never the payload/row synchronisation.
     """
-    if require_owner:
+    template = (
         require_owned_template(database, template_id, owner_user_id)
-    renamed = database.rename_template(template_id, name)
-    if templates_dir is not None:
-        set_payload_title(Path(templates_dir) / template_id, renamed.name)
-    return renamed
+        if require_owner else database.get_template(template_id)
+    )
+    if template is None:
+        raise ValueError("template_not_found")
+    name = name.strip()
+    if not name or len(name) > MAX_RESOURCE_NAME_LENGTH:
+        raise ValueError("invalid_template_name")
+    payload = Path(templates_dir) / template_id if templates_dir is not None else None
+    old_title = None
+    if payload is not None:
+        old_metadata = load_payload_metadata(payload)
+        if old_metadata is None:
+            raise ValueError("template_not_found")
+        old_title = old_metadata.title
+        set_payload_title(payload, name)
+    try:
+        return database.rename_template(template_id, name)
+    except Exception:
+        if payload is not None and old_title is not None:
+            try:
+                set_payload_title(payload, old_title)
+            except OSError:
+                logger.exception("Could not restore Template title for %s", template_id)
+        raise
 
 
 def set_template_public_owned(
@@ -478,9 +505,24 @@ def copy_template(
 
 
 def delete_owned_template(
-    database: PlatformDatabase, template_id: str, owner_user_id: int, templates_dir: Path
+    database: PlatformDatabase, template_id: str, owner_user_id: int,
+    templates_dir: Path, *, require_owner: bool = True,
 ) -> None:
-    """Owner-facing delete; identical helper the Admin console uses."""
-    require_owned_template(database, template_id, owner_user_id)
-    database.delete_template(template_id)
-    delete_template_payload(templates_dir, template_id)
+    """Delete a Template with the same compensating path for owner and Admin."""
+    if require_owner:
+        require_owned_template(database, template_id, owner_user_id)
+    elif database.get_template(template_id) is None:
+        raise ValueError("template_not_found")
+    payload = Path(templates_dir) / template_id
+    staging = Path(templates_dir) / f".{template_id}.deleting"
+    staged = payload.is_dir()
+    if staged:
+        payload.rename(staging)
+    try:
+        database.delete_template(template_id)
+    except Exception:
+        if staged:
+            staging.rename(payload)
+        raise
+    if staged:
+        shutil.rmtree(staging, ignore_errors=True)

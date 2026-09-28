@@ -7,13 +7,14 @@ type Props = {
   busy: boolean;
   error: string;
   initialCode?: string;
+  currentRoomCode?: string;
   onSearch: (code: string) => Promise<RoomItem | null>;
   onJoin: (room: RoomItem, password: string) => void;
   onClose: () => void;
 };
 
 export function JoinRoomForm({
-  busy, error, initialCode = "", onSearch, onJoin, onClose,
+  busy, error, initialCode = "", currentRoomCode, onSearch, onJoin, onClose,
 }: Props) {
   const [code, setCode] = useState(initialCode);
   const [room, setRoom] = useState<RoomItem | null>(null);
@@ -63,11 +64,11 @@ export function JoinRoomForm({
           {roomGameName(room) ? ` · ${roomGameName(room)}` : ""}
         </span>
       </div>
-      {roomNeedsPassword(room) && <input type="password" placeholder="房间密码" value={password}
+      {roomNeedsPassword(room) && currentRoomCode !== room.code && <input type="password" placeholder="房间密码" value={password}
         onChange={(event) => setPassword(event.target.value)} />}
-      {roomIsFull(room) && <p className="error-text">房间人数已满</p>}
+      {roomIsFull(room, currentRoomCode) && <p className="error-text">房间人数已满</p>}
       <div className="panel-actions">
-        <button disabled={busy || roomIsFull(room)} onClick={join}>加入</button>
+        <button disabled={busy || roomIsFull(room, currentRoomCode)} onClick={join}>加入</button>
         <button className="secondary" onClick={onClose}>取消</button>
       </div>
     </article>}

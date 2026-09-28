@@ -6,6 +6,7 @@ from pathlib import Path
 from server.gameserver.database import Database
 from server.gameserver.game_server import GameServer
 from server.gameserver.models import PlayerStatus
+from server.gameserver.protocol import MAX_ACTION_LENGTH
 from server.gameserver.session import Sessions
 from tests.support import user
 
@@ -22,6 +23,28 @@ ALICE, BOB, TOM = user(1, "Alice"), user(2, "Bob"), user(3, "Tom")
 
 
 class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_common_protocol_errors_have_codes_and_chinese_details(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            server = GameServer(database, None, None, None, owner_user_id=1)
+            socket = FakeConnection()
+            await server.sessions.join(ALICE, socket)
+            for message, code in (
+                ({"type": "room_chat", "text": "  "}, "empty_chat_message"),
+                ([], "invalid_json_object"),
+                ({"type": "rollback", "round": 0}, "invalid_rollback_round"),
+            ):
+                await server._handle_command(1, socket, json.dumps(message))
+                self.assertEqual(socket.messages[-1]["code"], code)
+                self.assertTrue(any("\u4e00" <= char <= "\u9fff" for char in socket.messages[-1]["detail"]))
+            await server.sessions.join(BOB, FakeConnection())
+            await server.sessions.assign_roles({"P1": 1, "P2": 2})
+            await server._handle_command(1, socket, json.dumps({
+                "type": "action", "text": "x" * (MAX_ACTION_LENGTH + 1),
+            }))
+            self.assertEqual(socket.messages[-1]["code"], "action_too_long")
+
     async def test_one_hundred_users_and_capacity(self) -> None:
         sessions = Sessions(max_users=100)
         for index in range(1, 101):

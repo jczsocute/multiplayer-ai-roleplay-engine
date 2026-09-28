@@ -53,6 +53,38 @@ class MockNarrator:
 
 
 class RecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_world_update_failure_keeps_actions_locked_for_full_retry(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database = Database(str(Path(directory.name) / "game.db"))
+        await database.initialize(INITIAL_WORLD)
+        completed = CompletedRound(1, {"P1": "open", "P2": "watch"})
+
+        class FailOnce:
+            def __init__(self):
+                self.calls = 0
+
+            async def update(self, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("LLM unavailable")
+                return WORLD_RESULT
+
+        updater = FailOnce()
+        game = GameServer(database, updater, MockPlayerViews(), MockNarrator(), 1)
+        game.rounds.begin_reprocess(completed)
+        await game._process_round(completed)
+        failed = await database.get_recovery_data(1)
+        self.assertEqual(failed["stage"], RoundStage.WORLD_UPDATING)
+        self.assertEqual(failed["actions"], completed.actions)
+        self.assertTrue(failed["locked"])
+        self.assertTrue(game.rounds.is_processing())
+
+        await game.retry_round()
+        self.assertEqual(updater.calls, 2)
+        self.assertEqual(game.rounds.round_number, 2)
+        self.assertEqual((await database.get_recovery_data(1))["stage"], RoundStage.FINISHED)
+
     async def make_game(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

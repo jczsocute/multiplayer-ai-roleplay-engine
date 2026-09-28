@@ -22,10 +22,14 @@ type Props = {
   myTemplates: TemplateItem[];
   games: GameItem[];
   rooms: RoomItem[];
+  currentRoom: RoomItem | null;
+  recoveryFailedRoom: string | null;
   error: string;
   notice: string;
   busy: boolean;
   onLogout: () => void;
+  onReturnCurrent: () => void;
+  onLeaveCurrent: () => Promise<void>;
   onRefreshRooms: () => Promise<void>;
   onCreate: (body: object) => Promise<boolean>;
   onJoin: (room: RoomItem, password: string) => void;
@@ -88,7 +92,7 @@ export function PlatformHome(props: Props) {
   };
   /** Room row click: no password joins at once, otherwise ask for it. */
   const openRoom = (room: RoomItem, password: string) => {
-    if (room.has_password && !password) {
+    if (room.has_password && !password && props.currentRoom?.code !== room.code) {
       setJoinCode(room.code);
       setPanel("join");
       return;
@@ -119,6 +123,19 @@ export function PlatformHome(props: Props) {
 
     {props.error && <p className="error-banner">{props.error}</p>}
     {props.notice && <p className="notice-banner">{props.notice}</p>}
+    {props.currentRoom && <section className="panel">
+      <p>你当前仍在{roomLabel(props.currentRoom)}。</p>
+      <div className="panel-actions">
+        <button onClick={props.onReturnCurrent}>返回房间</button>
+        <button className="secondary" onClick={() => void props.onLeaveCurrent()}>离开房间</button>
+      </div>
+    </section>}
+    {props.recoveryFailedRoom && <section className="panel">
+      <p>你的房间 {props.recoveryFailedRoom} 恢复失败，无法加入。</p>
+      <button className="secondary" onClick={() => void props.onCloseRoom(props.recoveryFailedRoom!)}>
+        关闭异常房间
+      </button>
+    </section>}
 
     <section className="panel">
       <div className="panel-head">
@@ -129,7 +146,7 @@ export function PlatformHome(props: Props) {
       {!props.rooms.length && <p className="muted">暂无活跃房间。</p>}
       <div className="lobby-list">
         {rooms.map((room) => <article className="row-card row-inline" key={room.code}>
-          <button className="row-main row-toggle" disabled={roomIsFull(room)}
+          <button className="row-main row-toggle" disabled={roomIsFull(room, props.currentRoom?.code)}
             onClick={() => openRoom(room, "")}>
             <strong>{roomLabel(room)}</strong>
             <span className="muted">
@@ -138,8 +155,8 @@ export function PlatformHome(props: Props) {
             </span>
           </button>
           <div className="row-actions">
-            <button disabled={roomIsFull(room)} onClick={() => openRoom(room, "")}>
-              {roomIsFull(room) ? "已满" : "加入"}
+            <button disabled={roomIsFull(room, props.currentRoom?.code)} onClick={() => openRoom(room, "")}>
+              {roomIsFull(room, props.currentRoom?.code) ? "已满" : "加入"}
             </button>
             {mayManageRoom(room, props.userId) && <button className="secondary"
               onClick={() => void props.onCloseRoom(room.code)}>关闭</button>}
@@ -175,7 +192,7 @@ export function PlatformHome(props: Props) {
 
     {panel === "join" && <OverlayPanel title="加入房间" onClose={close}>
       <JoinRoomForm busy={props.busy} error={props.error} initialCode={joinCode}
-        onClose={close} onSearch={props.onSearch}
+        onClose={close} onSearch={props.onSearch} currentRoomCode={props.currentRoom?.code}
         onJoin={(room, password) => { close(); props.onJoin(room, password); }} />
     </OverlayPanel>}
 

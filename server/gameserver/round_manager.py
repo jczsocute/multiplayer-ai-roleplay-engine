@@ -26,9 +26,7 @@ class RoundManager:
         if player.status != PlayerStatus.EDITING:
             raise RoundError("只有编辑中的玩家可以修改行动")
         if len(text) > MAX_ACTION_LENGTH:
-            raise RoundError(
-                f"action is too long (maximum {MAX_ACTION_LENGTH} characters)"
-            )
+            raise RoundError("action_too_long")
         player.action = text
 
     def submit(self, player_id: str) -> CompletedRound | None:
@@ -76,12 +74,6 @@ class RoundManager:
         for player in self.players.values():
             player.status = PlayerStatus.EDITING
             player.action = ""
-
-    def abort_processing(self) -> None:
-        if not self.is_processing():
-            raise RoundError("本回合当前没有在处理")
-        for player in self.players.values():
-            player.status = PlayerStatus.EDITING
 
     def is_processing(self) -> bool:
         return all(

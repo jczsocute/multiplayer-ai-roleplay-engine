@@ -178,7 +178,11 @@ def main() -> None:
 async def _run_platform(
     database: PlatformDatabase, settings: PlatformSettings
 ) -> None:
-    rooms = RoomManager(database, max_users=settings.max_room_users)
+    min_role_count, max_role_count = load_role_limits()
+    rooms = RoomManager(
+        database, max_users=settings.max_room_users,
+        min_role_count=min_role_count, max_role_count=max_role_count,
+    )
     # Registered payloads only: idempotent, so a normal startup is a no-op. This
     # also backfills `metadata.json.title` and mirrors it into the catalog row.
     bundled_titles = {name: script.title for name, script in BUNDLED_SCRIPTS.items()}
@@ -187,7 +191,6 @@ async def _run_platform(
     ):
         logger.info("Migrated %s payload to metadata.json", label)
     await rooms.load_active_rooms()
-    min_role_count, max_role_count = load_role_limits()
     app = create_platform_app(
         database,
         ui_font_scale=settings.ui_font_scale,

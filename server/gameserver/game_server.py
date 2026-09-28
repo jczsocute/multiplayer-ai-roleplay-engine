@@ -22,6 +22,18 @@ from server.gameserver.session import AccountIdentity, Connection, JoinResult, S
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+USER_ERRORS = {
+    "action_too_long": "行动内容过长",
+    "empty_chat_message": "聊天消息不能为空",
+    "chat_message_too_long": "聊天消息过长",
+    "invalid_retry_round": "重试需要有效的回合编号",
+    "invalid_rollback_round": "回滚需要有效的回合编号",
+    "role_reassign_not_paused": "重新分配前，已占用角色必须暂停",
+    "invalid_json_object": "消息必须是 JSON 对象",
+    "unknown_role": "未知角色",
+    "roles_not_assigned": "角色尚未分配",
+}
+
 
 class GameServer:
     def __init__(
@@ -161,7 +173,11 @@ class GameServer:
         except (ConnectionClosed, asyncio.TimeoutError):
             pass
         except (ValueError, json.JSONDecodeError) as exc:
-            await self._send_error(websocket, str(exc))
+            code = str(exc)
+            await self._send_error(
+                websocket, USER_ERRORS.get(code, code),
+                code=code if code in USER_ERRORS else None,
+            )
             await websocket.close(code=1008)
         finally:
             if user_id is not None:
@@ -234,13 +250,14 @@ class GameServer:
         await self._finish_member_exit(user.user_id, user.username, user.role)
 
     async def evict_user(
-        self, user_id: int, *, code: str = "kicked",
+        self, user_id: int, *, code: str | None = "kicked",
         reason: str = "你已被房主移出房间",
     ) -> bool:
         """Remove one participant now: notify, close, release role and seat.
 
-        Shared by the disconnect timeout and by host kick so the cleanup exists
-        once. Returns False when the user is not in this Room.
+        Shared by host kick and explicit leave. The timeout uses the same
+        _finish_member_exit step after its grace session expires.
+        Returns False when the user is not in this Room.
         """
         user = self.sessions.users.get(user_id)
         if user is None:
@@ -248,7 +265,7 @@ class GameServer:
         logger.info("User %s evicted from the room", user.username)
         connection = user.websocket
         # Notify before removing: the participant is gone from Sessions afterwards.
-        if connection is not None:
+        if connection is not None and code is not None:
             try:
                 await connection.send(json.dumps(
                     {"type": code, "reason": reason}, ensure_ascii=False
@@ -258,11 +275,15 @@ class GameServer:
         await self.sessions.evict(user_id)
         if connection is not None:
             try:
-                await connection.close(code=1008)
+                await connection.close(code=1008 if code else 1000)
             except Exception:
                 logger.debug("Could not close the socket of %s", user.username)
         await self._finish_member_exit(user_id, user.username, user.role, reason)
         return True
+
+    async def leave_user(self, user_id: int) -> bool:
+        """Explicit platform leave uses the shared participant cleanup, without kick."""
+        return await self.evict_user(user_id, code=None, reason="")
 
     async def _finish_member_exit(
         self, user_id: int, username: str, role: str | None, reason: str = ""
@@ -312,15 +333,9 @@ class GameServer:
             completed = None
             async with self.command_lock:
                 if command == "leave":
-                    removed = await self.sessions.leave(user_id, websocket)
-                    if removed is not None:
-                        logger.info("User %s left explicitly", removed.username)
-                        await self._broadcast_presence()
-                        await self._broadcast_state()
-                        text = f"{removed.username} 已离开房间。"
-                        if removed.role:
-                            text += f" Player {removed.role} 当前无人扮演。"
-                        await self._broadcast_room_message("system", text)
+                    current = self.sessions.users.get(user_id)
+                    if current is not None and current.websocket is websocket:
+                        await self.leave_user(user_id)
                     return
                 player_id = await self.sessions.role_for(user_id)
                 if command in ("retry", "rollback"):
@@ -401,21 +416,14 @@ class GameServer:
                         await self.database.save_player(current_id, current.status, current.action)
                     await self._process_round(completed)
         except (RoundError, ValueError, json.JSONDecodeError) as exc:
-            await self._send_error(websocket, str(exc))
-
-    async def _assign_roles(self, requested: dict[str, str]) -> None:
-        # The Host console still speaks usernames; identity is resolved to user_id here.
-        resolved: dict[str, int] = {}
-        for role, username in requested.items():
-            participant = await self.sessions.user_by_username(username)
-            if participant is None:
-                raise RoundError(f"该用户不在房间内：{username}")
-            resolved[role] = participant.user_id
-
-        await self._assign_role_ids(resolved, requested)
+            code = str(exc)
+            await self._send_error(
+                websocket, USER_ERRORS.get(code, code),
+                code=code if code in USER_ERRORS else None,
+            )
 
     async def _assign_role_ids(
-        self, resolved: dict[str, int], display: dict[str, str] | None = None
+        self, resolved: dict[str, int]
     ) -> None:
         if self.rounds.is_processing():
             raise RoundError("AI 正在处理本回合，暂时不能重新分配角色")
@@ -430,9 +438,7 @@ class GameServer:
         before = await self.sessions.role_assignments()
         for role, assigned_id in before.items():
             if assigned_id is not None and self.rounds.players[role].status != PlayerStatus.PAUSED:
-                raise RoundError(
-                    "reassign requires each currently occupied role to be PAUSED or empty"
-                )
+                raise RoundError("role_reassign_not_paused")
         await self.sessions.assign_roles(resolved)
         after = await self.sessions.role_assignments()
         changed_roles = [
@@ -482,7 +488,7 @@ class GameServer:
 
         await self._broadcast_presence()
         await self._broadcast_state()
-        labels = display or await self.sessions.role_usernames()
+        labels = await self.sessions.role_usernames()
         await self._broadcast_room_message(
             "system",
             "Host 已完成角色分配："
@@ -505,7 +511,7 @@ class GameServer:
         include_current_view: bool = False,
     ) -> dict:
         if role not in self.role_ids:
-            raise RoundError(f"unknown role: {role}")
+            raise RoundError("unknown_role")
         display = await self.database.get_player_display(role)
         message = {
             "type": "role_view",
@@ -549,11 +555,9 @@ class GameServer:
     ) -> None:
         text = text.strip()
         if not text:
-            raise RoundError("chat message cannot be empty")
+            raise RoundError("empty_chat_message")
         if len(text) > MAX_ROOM_CHAT_LENGTH:
-            raise RoundError(
-                f"chat message is too long (maximum {MAX_ROOM_CHAT_LENGTH} characters)"
-            )
+            raise RoundError("chat_message_too_long")
         # Room Plane is broadcast-only; never write this text to story chat_messages.
         await self._broadcast_room_message(kind, text, sender, role)
 
@@ -576,6 +580,7 @@ class GameServer:
 
     async def _process_round(self, completed: CompletedRound) -> None:
         try:
+            await self.database.lock_round_actions(completed)
             await self._set_stage(RoundStage.WORLD_UPDATING)
             current_world_state = await self.database.get_world_state()
             world_result = await self.world_updater.update(
@@ -586,13 +591,10 @@ class GameServer:
             await self._set_stage(RoundStage.WORLD_DONE)
         except Exception:
             logger.exception("World update failed for round %s", completed.round_number)
-            self.rounds.abort_processing()
-            await self._set_stage(RoundStage.WAITING_INPUT)
-            for player_id, player in self.rounds.players.items():
-                await self.database.save_player(player_id, player.status, player.action)
             await self._broadcast_message({
                 "type": "error",
-                "detail": "世界更新失败，可以修改行动后重新提交",
+                "code": "world_update_failed",
+                "detail": "世界更新失败，房主可以重试本回合。",
             })
             await self._broadcast_state()
             return
@@ -622,7 +624,8 @@ class GameServer:
                 logger.error("Player view recovery failed for round %s", completed.round_number)
                 await self._broadcast_message({
                     "type": "error",
-                    "detail": "player view generation failed; the owner can retry the round",
+                    "code": "player_view_failed",
+                    "detail": "角色视角生成失败，房主可以重试本回合。",
                 })
                 return
         await self._set_stage(RoundStage.VIEW_DONE)
@@ -765,7 +768,7 @@ class GameServer:
         if round_number is None:
             round_number = await self._default_retry_round()
         if isinstance(round_number, bool) or not isinstance(round_number, int):
-            raise RoundError("retry requires an integer round number")
+            raise RoundError("invalid_retry_round")
         logger.info("Retrying round %s", round_number)
         actions = await self.database.prepare_retry_round(round_number)
         completed = CompletedRound(round_number, actions)
@@ -782,9 +785,9 @@ class GameServer:
 
     async def _rollback_to_round_now(self, round_number: object) -> None:
         if isinstance(round_number, bool) or not isinstance(round_number, int):
-            raise RoundError("rollback requires an integer round number")
+            raise RoundError("invalid_rollback_round")
         if round_number < 1:
-            raise RoundError("rollback round must be at least 1")
+            raise RoundError("invalid_rollback_round")
         logger.info("Rolling back to round %s", round_number)
         next_round = await self.database.rollback_to_round(round_number)
         self.rounds.reset_to_round(next_round)
@@ -813,7 +816,7 @@ class GameServer:
     ) -> None:
         player_id = await self.sessions.role_for(user_id)
         if player_id is None:
-            raise RoundError("roles have not been assigned")
+            raise RoundError("roles_not_assigned")
         display = await self.database.get_player_display(player_id)
         snapshot = await self._round_snapshot()
         await websocket.send(json.dumps({
@@ -854,7 +857,7 @@ class GameServer:
     def _decode(raw_message: str) -> dict:
         message = json.loads(raw_message)
         if not isinstance(message, dict):
-            raise ValueError("message must be a JSON object")
+            raise ValueError("invalid_json_object")
         return message
 
     @staticmethod

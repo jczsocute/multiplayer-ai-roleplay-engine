@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 
 from server.gameserver.database import Database
 from server.gameserver.game_server import GameServer
+from server.platform.catalog import import_template
 from server.platform.database import PlatformDatabase
 from server.platform.room_manager import RoomManager, validate_room_password
 from server.platform.web import create_platform_app
@@ -161,6 +162,57 @@ class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
         reopened = await self.manager.create_room_from_game(self.alice, self.game_a.id)
         self.assertNotEqual(reopened.code, room.code)
 
+    async def test_template_room_failure_removes_only_new_snapshot(self) -> None:
+        template = import_template(
+            self.platform, Path("templates/default"), self.root / "templates",
+            self.alice.id, "Source", is_public=True,
+        )
+        old_game = self.game_a.id
+        async def failing_factory(_path: Path, _owner: int) -> GameServer:
+            raise RuntimeError("runtime failed")
+        self.manager.game_factory = failing_factory
+        with self.assertRaisesRegex(RuntimeError, "runtime failed"):
+            await self.manager.create_room_from_template(self.alice, template.id, "New save")
+        self.assertEqual(
+            {game.id for game in self.platform.list_user_games(self.alice.id)},
+            {old_game},
+        )
+        self.assertTrue((self.root / "templates" / template.id).is_dir())
+        self.assertIsNotNone(self.platform.get_game(old_game))
+        self.assertEqual(self.platform.list_rooms(), [])
+
+    async def test_template_room_preflight_leaves_no_snapshot(self) -> None:
+        template = import_template(
+            self.platform, Path("templates/default"), self.root / "templates",
+            self.alice.id, "Source",
+        )
+        self.manager.min_role_count = 3
+        with self.assertRaises(ValueError):
+            await self.manager.create_room_from_template(self.alice, template.id, "Invalid")
+        self.assertEqual(
+            {game.id for game in self.platform.list_user_games(self.alice.id)},
+            {self.game_a.id},
+        )
+        self.manager.min_role_count = 2
+        await self.manager.create_room_from_game(self.alice, self.game_a.id)
+        with self.assertRaisesRegex(ValueError, "owner_already_has_room"):
+            await self.manager.create_room_from_template(self.alice, template.id, "Invalid")
+        self.assertEqual(
+            {game.id for game in self.platform.list_user_games(self.alice.id)},
+            {self.game_a.id},
+        )
+
+    async def test_recovery_failed_room_is_admin_visible_and_closable(self) -> None:
+        self.platform.create_room_metadata("GHOST1", self.alice.id, self.game_a.id, None, None)
+        detail = await self.manager.admin_room("GHOST1")
+        self.assertEqual(detail["runtime_status"], "RECOVERY_FAILED")
+        self.assertEqual(detail["game_id"], self.game_a.id)
+        self.assertEqual((await self.manager.list_admin_rooms())[0]["code"], "GHOST1")
+        self.assertEqual(await self.manager.list_public_rooms(), [])
+        await self.manager.close_room("GHOST1", admin=True)
+        self.assertIsNone(self.platform.get_room("GHOST1"))
+        self.assertIsNotNone(self.platform.get_game(self.game_a.id))
+
     async def test_password_validation_and_hashing(self) -> None:
         room = await self.manager.create_room_from_game(
             self.alice, self.game_a.id, "abc_123"
@@ -285,8 +337,14 @@ class PlatformRoomTransportTests(unittest.TestCase):
                     self.assertEqual(ws.receive_json()["type"], "joined")
                 with client.websocket_connect(f"/ws?room={room.code}", headers=headers) as ws:
                     ws.send_json({"type": "join", "password": "wrong"})
-                    error = ws.receive_json()
-                    self.assertEqual(error["code"], "invalid_room_password")
+                    self.assertEqual(ws.receive_json()["type"], "joined")
+                # A first-time member still needs the Room Password.
+                with client.websocket_connect(
+                    f"/ws?room={room.code}",
+                    headers={"cookie": f"rp_auth={bob_token}"},
+                ) as ws:
+                    ws.send_json({"type": "join", "password": "wrong"})
+                    self.assertEqual(ws.receive_json()["code"], "invalid_room_password")
                 created = client.post(
                     "/api/rooms",
                     headers={"cookie": f"rp_auth={bob_token}"},

@@ -93,7 +93,9 @@ Narrator 只取最近 `NARRATOR_HISTORY_ROUNDS` 个完整回合，默认 20。
 - `/retry` 保留原 actions，从前一轮结果重新运行完整 WorldUpdater + Narrators，并覆盖目标轮输出。
 - `/rollback N` 物理删除 N 之后的回合数据，恢复 Round N 的 world，并从 N+1 的 EDITING 状态继续。
 - 未完成且非 `WAITING_INPUT` 的 round 在恢复时完整重跑，不从中间 stage 部分续跑。
-- LLM 错误由房主明确 retry；没有无限自动重试，也不保证请求级 exactly-once。
+- WorldUpdater、PlayerViewGenerator 或 Narrator 任一步失败，都保留本回合原 actions
+  和 PROCESSING 状态。房主明确 retry 时从基础 world 完整重跑；玩家不能在失败后
+  修改行动重新提交。没有无限自动重试，也不保证请求级 exactly-once。
 - 时间线始终是单一线性历史，不使用 revision/branch/event sourcing。
 
 ## Legacy 单局运行

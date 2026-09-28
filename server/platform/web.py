@@ -1,4 +1,4 @@
-"""HTTP shell for Platform Core v0.1 (auth plus read-only catalogs)."""
+"""HTTP and WebSocket shell for Platform accounts, resources and Rooms."""
 
 import asyncio
 import json
@@ -47,7 +47,9 @@ def create_platform_app(
     max_role_count: int = 4,
 ) -> Starlette:
     dist = static_dir or Path(__file__).resolve().parents[2] / "web" / "dist"
-    room_manager = room_manager or RoomManager(database)
+    room_manager = room_manager or RoomManager(
+        database, min_role_count=min_role_count, max_role_count=max_role_count
+    )
 
     async def resolve_user(request: Request) -> AuthenticatedUser | None:
         token = request.cookies.get(AUTH_COOKIE_NAME)
@@ -354,6 +356,21 @@ def create_platform_app(
             return JSONResponse({"error": "room_not_found"}, status_code=404)
         return JSONResponse(value)
 
+    async def current_room(request: Request) -> JSONResponse:
+        user = await resolve_user(request)
+        if user is None:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        code = room_manager.user_current_room(user.id)
+        failed = next(
+            (room.code for room in database.list_rooms()
+             if room.owner_user_id == user.id and room_manager.get_runtime(room.code) is None),
+            None,
+        )
+        return JSONResponse({
+            "room": await room_manager.public_room(code) if code else None,
+            "recovery_failed_room": failed,
+        })
+
     async def create_room(request: Request) -> JSONResponse:
         user = await resolve_user(request)
         if user is None:
@@ -399,7 +416,7 @@ def create_platform_app(
         user = await resolve_user(request)
         if user is None:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        await room_manager.leave(user.id, request.path_params["code"])
+        await room_manager.leave_member(user.id, request.path_params["code"])
         return JSONResponse({"ok": True})
 
     async def game_websocket(websocket: WebSocket) -> None:
@@ -429,9 +446,9 @@ def create_platform_app(
                     websocket, "invalid_request", "第一条消息必须是 join 或 resume"
                 )
                 return
-            room_manager.verify_password(code, str(message.pop("password", "")))
-            if room_manager.occupancy(code) >= room_manager.max_users:
-                raise ValueError("room_full")
+            password = str(message.pop("password", ""))
+            if room_manager.user_current_room(user.id) != code:
+                await asyncio.to_thread(room_manager.verify_password, code, password)
             connection = WebSocketConnection(websocket, json.dumps(message))
             marker = connection
             await room_manager.enter(user.id, code, marker)
@@ -532,6 +549,7 @@ def create_platform_app(
         Route("/api/games/{game_id}/copy", copy_own_game, methods=["POST"]),
         Route("/api/rooms", rooms, methods=["GET"]),
         Route("/api/rooms", create_room, methods=["POST"]),
+        Route("/api/rooms/current", current_room, methods=["GET"]),
         Route("/api/rooms/{code}", room_detail, methods=["GET"]),
         Route("/api/rooms/{code}", close_room, methods=["DELETE"]),
         Route("/api/rooms/{code}/leave", leave_room, methods=["POST"]),

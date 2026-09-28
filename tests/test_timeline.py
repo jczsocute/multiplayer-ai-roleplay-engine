@@ -331,12 +331,12 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
         await self.submit_round(server, ROUND_1)
 
         cases = [
-            ({"type": "rollback", "round": 0}, "at least 1"),
+            ({"type": "rollback", "round": 0}, "回滚需要有效的回合编号"),
             ({"type": "rollback", "round": 99}, "does not exist"),
             ({"type": "rollback", "round": 2}, "not a finished round"),
-            ({"type": "rollback", "round": "x"}, "integer"),
-            ({"type": "rollback"}, "integer"),
-            ({"type": "rollback", "round": True}, "integer"),
+            ({"type": "rollback", "round": "x"}, "回滚需要有效的回合编号"),
+            ({"type": "rollback"}, "回滚需要有效的回合编号"),
+            ({"type": "rollback", "round": True}, "回滚需要有效的回合编号"),
         ]
         for payload, expected in cases:
             self.ws.messages.clear()

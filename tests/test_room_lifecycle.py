@@ -108,6 +108,28 @@ class RoomLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.seat(user(105, "U5"))  # same account re-enters its own Room
         self.assertEqual(self.manager.occupancy(self.room.code), 10)
 
+    async def test_explicit_leave_releases_membership_session_and_role(self) -> None:
+        socket = await self.connect(self.guest)
+        await self.manager.enter(self.guest.id, self.room.code, socket)
+        await self.room.game_server.sessions.assign_roles({"P1": self.guest.id})
+
+        await self.manager.leave_member(self.guest.id, self.room.code)
+
+        self.assertIsNone(self.manager.user_current_room(self.guest.id))
+        self.assertNotIn(self.guest.id, self.room.game_server.sessions.users)
+        self.assertEqual(await self.room.game_server.sessions.role_assignments(), {})
+        self.assertTrue(socket.closed)
+        self.assertFalse(any(message["type"] == "kicked" for message in socket.messages))
+
+    async def test_legacy_leave_command_also_releases_platform_callback(self) -> None:
+        socket = await self.connect(self.guest)
+        await self.manager.enter(self.guest.id, self.room.code, socket)
+        await self.room.game_server._handle_command(
+            self.guest.id, socket, json.dumps({"type": "leave"})
+        )
+        self.assertIsNone(self.manager.user_current_room(self.guest.id))
+        self.assertNotIn(self.guest.id, self.room.game_server.sessions.users)
+
     async def test_kick_and_timeout_release_the_seat(self) -> None:
         for index in range(1, 11):
             await self.seat(user(100 + index, f"U{index}"))

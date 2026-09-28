@@ -205,7 +205,7 @@ export default function GameApp({
   const logout = () => {
     explicitLeave.current = true;
     clearRetry();
-    sendMessage(socket.current, { type: "leave" });
+    if (!platformRoom) sendMessage(socket.current, { type: "leave" });
     socket.current?.close();
     socket.current = null;
     joined.current = false;

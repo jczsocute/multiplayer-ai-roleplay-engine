@@ -465,6 +465,56 @@ class ResourceApiTests(unittest.TestCase):
         self.assertIn("已满", error["detail"])
         self.assertIsNone(self.manager.user_current_room(self.bob.id))
 
+    def test_current_room_full_reconnect_and_explicit_leave(self) -> None:
+        self.manager.max_users = 2
+        room = asyncio.run(self.manager.create_room_from_game(
+            self.alice, self.game.id, "abc_123"
+        ))
+        alice, bob = self.headers(self.alice.id), self.headers(self.bob.id)
+        carol = self.database.create_user("Carol", "password123")
+        with self.client() as client:
+            for headers in (alice, bob):
+                with client.websocket_connect(f"/ws?room={room.code}", headers=headers) as ws:
+                    ws.send_json({"type": "join", "password": "abc_123"})
+                    self.assertEqual(ws.receive_json()["type"], "joined")
+            current = client.get("/api/rooms/current", headers=bob).json()["room"]
+            self.assertEqual(current["code"], room.code)
+            self.assertEqual(current["occupancy"], 2)
+            # A reserved grace seat reconnects without a second seat or password.
+            with client.websocket_connect(f"/ws?room={room.code}", headers=bob) as ws:
+                ws.send_json({"type": "join"})
+                self.assertEqual(ws.receive_json()["type"], "joined")
+            with client.websocket_connect(
+                f"/ws?room={room.code}", headers=self.headers(carol.id)
+            ) as ws:
+                ws.send_json({"type": "join", "password": "abc_123"})
+                self.assertEqual(ws.receive_json()["code"], "room_full")
+            self.assertEqual(
+                client.post(f"/api/rooms/{room.code}/leave", headers=bob).status_code,
+                200,
+            )
+            self.assertIsNone(client.get("/api/rooms/current", headers=bob).json()["room"])
+            self.assertNotIn(self.bob.id, room.game_server.sessions.users)
+
+    def test_owner_can_close_a_room_whose_runtime_failed_to_recover(self) -> None:
+        room = asyncio.run(self.manager.create_room_from_game(self.alice, self.game.id))
+        self.manager.rooms.pop(room.code)
+        with self.client() as client:
+            current = client.get(
+                "/api/rooms/current", headers=self.headers(self.alice.id)
+            ).json()
+            self.assertIsNone(current["room"])
+            self.assertEqual(current["recovery_failed_room"], room.code)
+            self.assertEqual(
+                client.get("/api/rooms", headers=self.headers(self.bob.id)).json()["rooms"],
+                [],
+            )
+            closed = client.delete(
+                f"/api/rooms/{room.code}", headers=self.headers(self.alice.id)
+            )
+        self.assertEqual(closed.status_code, 200)
+        self.assertIsNone(self.database.get_room(room.code))
+
     def test_websocket_reports_user_visible_errors_in_chinese(self) -> None:
         """Browser-facing errors carry a code plus Chinese text, never English."""
         room = asyncio.run(self.manager.create_room_from_game(self.alice, self.game.id))

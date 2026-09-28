@@ -5,7 +5,7 @@ import { MyGamesPanel } from "./MyGamesPanel";
 import { MyTemplatesPanel } from "./MyTemplatesPanel";
 import { PlatformHome } from "./PlatformHome";
 import { TemplateDetailPanel } from "./TemplateDetailPanel";
-import type { TemplateItem } from "../types";
+import type { RoomItem, TemplateItem } from "../types";
 
 const template: TemplateItem = {
   id: "tmpl_A", name: "森林之夜", owner_user_id: 1, owner_username: "Alice",
@@ -19,13 +19,17 @@ const asyncNoop = async () => undefined;
 const home = (
   available: TemplateItem[] = [template],
   publicTemplates: TemplateItem[] = [template],
+  currentRoom: RoomItem | null = null,
 ) => renderToStaticMarkup(
   <PlatformHome
     userId={1} username="Alice" roleCounts={[2, 3, 4]}
     templates={available} publicTemplates={publicTemplates}
-    myTemplates={available} games={[]} rooms={[]}
+    myTemplates={available} games={[]} rooms={currentRoom ? [currentRoom] : []}
+    currentRoom={currentRoom}
+    recoveryFailedRoom={null}
     error="" notice="" busy={false}
-    onLogout={noop} onRefreshRooms={asyncNoop} onCreate={async () => true}
+    onLogout={noop} onReturnCurrent={noop} onLeaveCurrent={asyncNoop}
+    onRefreshRooms={asyncNoop} onCreate={async () => true}
     onJoin={noop} onCloseRoom={asyncNoop} onSearch={async () => null}
     onRenameGame={asyncNoop} onCopyGame={asyncNoop} onDeleteGame={asyncNoop}
     onCreateTemplate={asyncNoop} onRenameTemplate={asyncNoop}
@@ -40,6 +44,18 @@ function expectScriptWording(html: string, ...expected: string[]) {
 }
 
 describe("user-facing Template wording", () => {
+  it("offers a return and leave action for a retained full-room membership", () => {
+    const room: RoomItem = {
+      code: "AB12", game_id: "game_A", game_name: "Save",
+      owner_user_id: 2, owner_username: "Bob", role_count: 2,
+      connected_count: 9, occupancy: 10, max_users: 10, has_password: true,
+    };
+    const html = home([template], [template], room);
+    expect(html).toContain("你当前仍在Bob 的房间");
+    expect(html).toContain("返回房间");
+    expect(html).toContain("离开房间");
+    expect(html).not.toContain("已满</button>");
+  });
   it("labels the lobby entries and the plaza as 剧本", () => {
     expectScriptWording(
       home(), "我的剧本", "剧本广场", "创建房间", "加入房间", "我的存档",

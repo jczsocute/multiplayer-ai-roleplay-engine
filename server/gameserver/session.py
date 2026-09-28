@@ -94,10 +94,6 @@ class Sessions:
             self._cancel_disconnect_task(user)
             return self.users.pop(user_id)
 
-    async def leave(self, user_id: int, websocket: Connection) -> User | None:
-        """Explicit leave: no grace period, identity released at once."""
-        return await self.remove(user_id, websocket)
-
     async def evict(self, user_id: int) -> User | None:
         """Remove a participant regardless of which connection it holds.
 
@@ -209,12 +205,6 @@ class Sessions:
         async with self._lock:
             return next((user for user in self.users.values() if user.role == role), None)
 
-    async def user_by_username(self, username: str) -> User | None:
-        async with self._lock:
-            return next(
-                (user for user in self.users.values() if user.username == username), None
-            )
-
     async def role_assignments(self) -> dict[str, int]:
         """Role id -> account id for every currently occupied role."""
         async with self._lock:
@@ -250,12 +240,6 @@ class Sessions:
             if user.role is not None:
                 raise ValueError("玩家不能切换查看视角")
             user.view_role = role
-
-    async def set_host_view(self, view: str) -> None:
-        if view != "world":
-            self._validate_role(view)
-        async with self._lock:
-            self.host_view = view
 
     def _validate_role(self, role: str) -> None:
         if role not in self._role_set:

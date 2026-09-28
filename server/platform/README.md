@@ -99,6 +99,7 @@ GET  /api/me
 GET  /api/templates
 GET  /api/games
 GET  /api/rooms
+GET  /api/rooms/current
 GET  /api/rooms/<code>
 POST /api/rooms
 POST /api/rooms/<code>/leave
@@ -108,6 +109,10 @@ DELETE /api/rooms/<code>
 创建接口接受 `source=game` 或 `source=template`。Template 来源先创建归当前用户
 所有的长期 Game 快照，再激活为 Room。关闭接口只允许 owner，且只删除 Room
 metadata/Runtime，不删除 Game。未登录访问资源 API 返回 401。
+创建前检查房主、剧本权限和当前角色数；若快照后建房失败，只删除本次新建的存档。
+`GET /api/rooms/current` 用进程内 membership 帮助刷新后的大厅找回房间；
+已保留座位的同房重连无需再次输入密码。Platform 的显式离房只走 leave API，
+由 RoomManager 同步清理 GameServer participant、角色、连接和座位。
 
 ## 资源管理 API（Lobby owner）
 
@@ -135,7 +140,7 @@ DELETE /api/games/<id>
   可见性切换走 `catalog.set_template_public_owned` → `PlatformDatabase.set_template_public`，
   与 Admin Console 的 `set-template-public` 是同一个实现，Admin 只是跳过 owner 检查。
   公开后该 Template 会出现在所有人的 `GET /api/templates` 中。
-- Template payload 的元数据统一放在 `metadata.json`（`count`/`names`/`introduction`/`tags`），
+- Template payload 的元数据统一放在 `metadata.json`（`count`/`names`/`title`/`introduction`/`tags`），
   运行时不读取旧的 `roles.json`；已登记的 Template / Game payload 会在 Platform 启动时
   被一次性、幂等地迁移（`catalog.migrate_catalog_payloads`），失败只记日志不阻塞启动。
 `introduction`/`tags` 只存在于 payload，不写入 `platform.db`。
@@ -147,6 +152,9 @@ DELETE /api/games/<id>
 - 文件操作采用补偿式一致性：先写到 `.{id}.creating|copying` 临时目录，写 metadata，
   再 rename 到最终位置；失败时清理临时目录并回滚 metadata（delete 则先把 payload
   移开、删 metadata、再删文件）。
+- 剧本改名先写 payload title，再更新 catalog；数据库更新失败时尝试恢复旧 title。
+  删除先将 payload 移至 `.deleting` 目录，数据库删除失败时移回。
+  导入旧 payload 先复制到临时目录，只迁移副本，不修改用户源目录。
 
 ## Room 生命周期
 
@@ -160,6 +168,7 @@ ROOM_DISCONNECT_TIMEOUT_SECONDS=300
   座位数（已连接成员 + 断线宽限期内成员），而不是 websocket 数。
 - 容量在 `RoomManager.enter` 中校验：同一账号重入自己的 Room 不额外占座，超过
   `MAX_ROOM_USERS` 的新用户得到 `room_full`。
+- 房间密码的 scrypt 校验在线程中执行；密码只用于首次加入。
 - 失去 Room 连接后 `ROOM_DISCONNECT_TIMEOUT_SECONDS`（默认 300 秒）内保留
   `user_room`、角色与座位；超时后普通成员真正离开，房主超时通过同一套
   `RoomManager.close_room` 自动关房（保留 Game Save）。
@@ -186,6 +195,9 @@ python client/admin.py --uri ws://127.0.0.1:8080/admin/ws
 `PlatformDatabase`、`catalog`、`RoomManager` 的同一批 helper，不在客户端直接操作 SQLite。
 删除用户时如仍拥有剧本、存档或房间会被拒绝；删除剧本保留既有存档；管理员关闭房间
 仍保留 Game Save。`users.is_admin` 是唯一管理员标志，不会自动授予首位注册用户。
+正在别人房间中的用户也不能由 Admin 删除。恢复失败的 Room 保留数据库记录，
+在 Admin 中显示为 `RECOVERY_FAILED` 并可关闭；普通大厅不展示这种房间。
+其房主会在大厅看到异常房间提示和关闭入口。
 
 ## 导入 legacy Template
 

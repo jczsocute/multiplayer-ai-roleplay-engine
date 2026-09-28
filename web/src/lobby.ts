@@ -49,7 +49,8 @@ export function roomGameName(room: RoomItem): string {
   return room.game_name && room.game_name !== room.code ? room.game_name : "";
 }
 
-export function roomIsFull(room: RoomItem): boolean {
+export function roomIsFull(room: RoomItem, currentRoomCode?: string): boolean {
+  if (currentRoomCode === room.code) return false;
   const max = room.max_users || 10;
   return (room.occupancy ?? room.connected_count ?? 0) >= max;
 }

@@ -55,6 +55,7 @@ describe("active room rows", () => {
   it("marks a room full at capacity so the join button can disable", () => {
     expect(roomIsFull(room({ occupancy: 9 }))).toBe(false);
     expect(roomIsFull(room({ occupancy: 10 }))).toBe(true);
+    expect(roomIsFull(room({ occupancy: 10 }), "K7Q9MX")).toBe(false);
   });
 
   it("keeps the gamename as secondary text only when it says something", () => {

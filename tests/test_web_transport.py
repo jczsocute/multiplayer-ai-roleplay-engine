@@ -224,8 +224,9 @@ class WebTransportTests(unittest.TestCase):
 
                 assert client.portal is not None
                 client.portal.call(
-                    self.game._assign_roles,
-                    {"P1": "Browser", "P2": "Terminal"},
+                    self.game._assign_role_ids,
+                    {"P1": self.accounts.user_by_username("Browser").id,
+                     "P2": self.accounts.user_by_username("Terminal").id},
                 )
                 browser_view = self._receive_until(browser, "role_view")
                 terminal_view = self._receive_until(terminal, "role_view")
@@ -285,8 +286,9 @@ class WebTransportTests(unittest.TestCase):
                     self.assertEqual([role["id"] for role in joined["roles"]], ["P1", "P2", "P3"])
                 assert client.portal is not None
                 client.portal.call(
-                    game._assign_roles,
-                    {"P1": "Alice", "P2": "Bob", "P3": "Carol"},
+                    game._assign_role_ids,
+                    {role: self.accounts.user_by_username(name).id
+                     for role, name in zip(roles.role_ids, names, strict=True)},
                 )
                 for role, socket in zip(roles.role_ids, sockets, strict=True):
                     self.assertEqual(self._receive_until(socket, "role_view")["role"], role)

@@ -66,6 +66,8 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
   const [myTemplates, setMyTemplates] = useState<TemplateItem[]>([]);
   const [games, setGames] = useState<GameItem[]>([]);
   const [rooms, setRooms] = useState<RoomItem[]>([]);
+  const [currentRoom, setCurrentRoom] = useState<RoomItem | null>(null);
+  const [recoveryFailedRoom, setRecoveryFailedRoom] = useState<string | null>(null);
   const [activeRoom, setActiveRoom] = useState<{ code: string; password: string } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -91,17 +93,29 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
     return result.ok ? "" : result.error;
   };
   const refreshRooms = async () => {
-    const result = await apiGet<{ rooms: RoomItem[] }>("/api/rooms");
+    const [result, current] = await Promise.all([
+      apiGet<{ rooms: RoomItem[] }>("/api/rooms"),
+      apiGet<{ room: RoomItem | null; recovery_failed_room?: string | null }>("/api/rooms/current"),
+    ]);
     if (result.ok) setRooms(result.data.rooms);
-    else setError(result.error);
+    if (current.ok) {
+      setCurrentRoom(current.data.room);
+      setRecoveryFailedRoom(current.data.recovery_failed_room ?? null);
+    }
+    if (!result.ok) setError(result.error);
   };
   const refreshAll = async () => {
     const id = ++requestId.current;
-    const [templatesError, gamesError, roomResult] = await Promise.all([
+    const [templatesError, gamesError, roomResult, currentResult] = await Promise.all([
       loadTemplates(), loadGames(), apiGet<{ rooms: RoomItem[] }>("/api/rooms"),
+      apiGet<{ room: RoomItem | null; recovery_failed_room?: string | null }>("/api/rooms/current"),
     ]);
     if (id !== requestId.current) return;
     if (roomResult.ok) setRooms(roomResult.data.rooms);
+    if (currentResult.ok) {
+      setCurrentRoom(currentResult.data.room);
+      setRecoveryFailedRoom(currentResult.data.recovery_failed_room ?? null);
+    }
     setError(templatesError || gamesError || (roomResult.ok ? "" : roomResult.error));
   };
 
@@ -170,11 +184,21 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
     await refreshAll();
   };
 
+  const leaveCurrentRoom = async () => {
+    if (!currentRoom) return;
+    clearMessages();
+    const result = await apiPost<{ ok: boolean }>(`/api/rooms/${currentRoom.code}/leave`);
+    if (!result.ok) { setError(result.error); return; }
+    setCurrentRoom(null);
+    await refreshAll();
+    setNotice("已离开房间。");
+  };
+
   const logout = () => {
     void fetch("/api/logout", { method: "POST" }).finally(() => {
       setUser(null);
       setTemplates([]); setPublicTemplates([]); setMyTemplates([]);
-      setGames([]); setRooms([]);
+      setGames([]); setRooms([]); setCurrentRoom(null); setRecoveryFailedRoom(null);
       clearMessages();
     });
   };
@@ -240,9 +264,12 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
   return <PlatformHome
     userId={user.id} username={user.username} roleCounts={counts}
     templates={templates} publicTemplates={publicTemplates}
-    myTemplates={myTemplates} games={games} rooms={rooms}
+    myTemplates={myTemplates} games={games} rooms={rooms} currentRoom={currentRoom}
+    recoveryFailedRoom={recoveryFailedRoom}
     error={error} notice={notice} busy={busy}
     onLogout={logout}
+    onReturnCurrent={() => currentRoom && setActiveRoom({ code: currentRoom.code, password: "" })}
+    onLeaveCurrent={leaveCurrentRoom}
     onRefreshRooms={refreshRooms}
     onCreate={createRoom}
     onJoin={(room, password) => setActiveRoom({ code: room.code, password })}
