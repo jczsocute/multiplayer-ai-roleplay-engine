@@ -2,6 +2,12 @@
 
 一个轻量级多人 AI 角色扮演引擎。服务器负责剧本、SQLite 状态和 DeepSeek 调用；角色集合由 `roles.json` 定义，房间另可容纳 Spectator。普通用户可直接使用手机或桌面浏览器加入，Textual 终端客户端继续作为 Reference Client。
 
+## 版本分支
+
+`archive/no-auth` 保存了引入账号与身份认证系统之前的最后一个完整版本。它继续采用轻量的 nickname/session 模型，适合运行不需要账号系统的简单单房间实例，并原则上仅作为历史快照保留，不再跟随 `main` 的新功能。
+
+`main` 从此进入在线平台方向开发，后续将围绕稳定 user identity、账号认证、房主所有权和 multi-room 等能力演进。
+
 ## 服务器安装与配置
 
 需要 Python 3.11 或更高版本：
