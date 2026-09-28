@@ -133,8 +133,8 @@ export default function App() {
           sessionRef.current = { nickname: message.name, roomKey: sessionRef.current.roomKey, resumeToken: message.resume_token };
           saveStoredSession(sessionRef.current);
           dispatch({ type: "session", ...sessionRef.current });
-          if (message.type === "joined" && !message.role && !message.view_role) {
-            sendMessage(next, { type: "view", role: "A" });
+          if (message.type === "joined" && !message.role && !message.view_role && message.roles[0]) {
+            sendMessage(next, { type: "view", role: message.roles[0].id });
           }
         }
         dispatch({ type: "server", message });

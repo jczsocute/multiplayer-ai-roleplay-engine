@@ -1,6 +1,6 @@
 # AI RP Engine
 
-一个轻量级双玩家 AI 角色扮演引擎。服务器负责剧本、SQLite 状态和 DeepSeek 调用；房间可容纳两名角色玩家与最多 98 名观众。普通用户可直接使用手机或桌面浏览器加入，Textual 终端客户端继续作为 Reference Client。
+一个轻量级多人 AI 角色扮演引擎。服务器负责剧本、SQLite 状态和 DeepSeek 调用；角色集合由 `roles.json` 定义，房间另可容纳 Spectator。普通用户可直接使用手机或桌面浏览器加入，Textual 终端客户端继续作为 Reference Client。
 
 ## 服务器安装与配置
 
@@ -20,7 +20,7 @@ LLM_MODEL=deepseek-flash
 WORLD_UPDATE_MAX_TOKENS=8192
 NARRATION_MAX_TOKENS=4096
 # Web 页面和 Public WebSocket (/ws)
-WEB_HOST=127.0.0.1
+WEB_HOST=0.0.0.0
 WEB_PORT=8080
 
 # 独立的本机 Host 管理入口；必须保持 loopback
@@ -35,6 +35,10 @@ DISCONNECT_GRACE_SECONDS=60
 
 # Web UI 字号缩放（0.4-1.5），默认 0.7 为紧凑排版。
 UI_FONT_SCALE=0.7
+
+# Scenario 角色数量的部署限制；引擎核心本身不写死上限
+MIN_ROLE_COUNT=2
+MAX_ROLE_COUNT=4
 ```
 
 API Key 只应保存在被 Git 忽略的 `.env` 中。可在正式开局前人工验证 DeepSeek JSON Output：
@@ -57,7 +61,7 @@ Smoke test 不会被普通单元测试自动执行。
 
 ### 数据层关系
 
-`world_state` 是唯一持续的客观世界状态（Canonical State），也是下一轮 World Updater 继承的主要状态输入。所有会影响未来世界演化的事实都应保存在其中，包括时间、环境、地点、NPC、隐藏信息、幕后行动，以及 A/B 的位置、身体、精神、物品、关系和必要认知。
+`world_state` 是唯一持续的客观世界状态（Canonical State），也是下一轮 World Updater 继承的主要状态输入。所有会影响未来世界演化的事实都应保存在其中，包括时间、环境、地点、NPC、隐藏信息、幕后行动，以及各角色的位置、身体、精神、物品、关系和必要认知。
 
 其余三类数据都是从本轮更新后的 `world_state` 派生出的当前视图：
 
@@ -65,14 +69,12 @@ Smoke test 不会被普通单元测试自动执行。
 world_state
    │
    ├── public_information
-   ├── player_views.A
-   ├── player_views.B
-   ├── player_statusbar.A
-   └── player_statusbar.B
+   ├── player_views.P1 ... player_views.PN
+   └── player_statusbar.P1 ... player_statusbar.PN
 ```
 
-- `public_information`：可安全提供给 A/B Narrator 的共享叙事上下文，例如日期、时间和公共进度；不包含未发现地点、秘密行动和玩家私有状态，也不直接显示在 Player TUI 中。
-- `player_views`：A/B 各自当前能感知、知道、发现或合理推断的信息，回答“这个玩家现在知道什么”。
+- `public_information`：可安全提供给所有角色 Narrator 的共享叙事上下文，例如日期、时间和公共进度；不包含未发现地点、秘密行动和角色私有状态，也不直接显示在 Player TUI 中。
+- `player_views`：每个角色当前能感知、知道、发现或合理推断的信息，回答“这个角色现在知道什么”。
 - `player_statusbar`：从 `world_state` 中对应角色真实状态提炼出的 UI 摘要，也供 Narrator 理解角色当前可展示状态；它不是角色真实状态的唯一存储位置。
 
 下一轮 World Updater 不依靠上一轮的 public/view/statusbar 延续事实。角色受伤、物品变化或记忆变化等持续信息必须先进入 `world_state`。
@@ -92,24 +94,23 @@ Narrator 只接收 `public_information`、当前玩家自己的 `player_view` �
 先从基础模板创建一个可玩的 Scenario：
 
 ```bash
-python -m server.main --create-scenario my_story
+python -m server.main --create-scenario my_story --role-count 3
 ```
 
-命令会完整复制 `templates/default/` 为 `templates/my_story/`，不会自动改写其中内容。然后直接编辑以下文件：
+未提供 `--role-count` 时命令会交互询问。默认部署允许 2–4 个角色，由 `MIN_ROLE_COUNT` / `MAX_ROLE_COUNT` 控制；把上限改为 6 后，核心运行时无需修改即可运行 6-role Scenario。创建命令会复制基础模板，并按角色数量生成对应文件：
 
 - `prompts/world_update.md`：世界管理 AI 的基本规则，负责客观世界状态、`public_information`、`player_views` 和 `player_statusbar`；不应在这里编写具体剧情。
-- `prompts/narration.md`：A/B 共用的玩家文学叙事规则。
+- `prompts/narration.md`：所有角色共用的文学叙事规则。
 - `prompts/ai_guidelines.md`：本剧本创作规范，例如人称、文风、节奏、信息隔离强度和特殊要求，不包含具体剧情。
 - `schemas/world_updater_output.json`：World Updater 单次调用的完整 DeepSeek JSON Output 示例外壳；它既不是 `world_state` schema，也不是标准 JSON Schema。
 - `world/world.md`：具体世界观、背景、规则和剧本设定。
-- `world/initial_state.json`：Round 0 的完整客观 `world_state`，包括 A/B 的初始真实角色状态。
-- `characters/player_a.md`：Player A 的角色设定。
-- `characters/player_b.md`：Player B 的角色设定。
-- `characters/statusbar/player_a.json`：Player A 希望展示的状态栏字段及组织说明。
-- `characters/statusbar/player_b.json`：Player B 希望展示的状态栏字段及组织说明。
-- `roles.json`：角色名清单，`count` 为角色数量，`names` 为依次排列的角色名（长度等于 `count`），供 UI 与提示词显示真实角色名，例如 `{"count": 2, "names": ["林承", "周璐"]}`。
+- `world/initial_state.json`：Round 0 的完整客观 `world_state`，`characters` 使用 `P1...PN`。
+- `characters/player_1.md ... player_N.md`：各角色设定。
+- `characters/opening/player_1.md ... player_N.md`：各角色专属的静态开场文本，进入角色视图时显示在所有历史回合之前。
+- `characters/statusbar/player_1.json ... player_N.json`：各角色状态栏结构。
+- `roles.json`：角色名清单，例如 `{"count": 3, "names": ["林承", "周璐", "苏禾"]}`。内部稳定 ID 按顺序为 `P1`、`P2`、`P3`；显示名称不作为数据库或协议主键。
 
-A/B 的状态栏结构可以完全不同。这些文件不是初始状态；初始身体、精神、位置、物品等真实事实必须写入 `world/initial_state.json`。
+各角色的状态栏结构可以完全不同。Opening 只是显示内容，不是 Round 0，不写入数据库或 canonical world state，也不进入 WorldUpdater、Narrator history 或其他 AI 上下文。初始身体、精神、位置、物品等真实事实仍必须写入 `world/initial_state.json`。
 
 ### 推荐编辑流程
 
@@ -117,9 +118,9 @@ A/B 的状态栏结构可以完全不同。这些文件不是初始状态；初�
 
 1. `world/world.md`
 2. `world/initial_state.json`
-3. `characters/player_a.md`
-4. `characters/player_b.md`
-5. `characters/statusbar/*.json`
+3. `characters/player_*.md`
+4. `characters/opening/player_*.md`
+5. `characters/statusbar/player_*.json`
 6. `prompts/ai_guidelines.md`
 
 需要深度定制 AI 行为时，再修改 `prompts/world_update.md`、`prompts/narration.md` 或 `schemas/world_updater_output.json`。普通剧本不一定需要修改核心 Prompt。
@@ -128,7 +129,7 @@ Scenario 管理命令：
 
 ```bash
 python -m server.main --list-scenarios
-python -m server.main --create-scenario lighthouse
+python -m server.main --create-scenario lighthouse --role-count 3
 python -m server.main --delete-scenario lighthouse
 ```
 
@@ -167,6 +168,8 @@ Public WebSocket: ws://127.0.0.1:8080/ws
 Host WebSocket:   ws://127.0.0.1:8766
 ```
 
+`WEB_HOST=0.0.0.0` 表示监听所有网卡；本机浏览器仍访问 `127.0.0.1`，局域网设备访问服务器的实际 LAN IP。不要在浏览器地址栏使用 `0.0.0.0`。
+
 `SERVER_HOST`/`SERVER_PORT` 仍作为 Web 配置的旧环境变量 fallback，但新部署应使用语义明确的 `WEB_*` 和 `HOST_WS_*`。
 
 ## 用户进入房间与角色分配
@@ -179,7 +182,7 @@ http://SERVER_IP:8080/
 
 页面会按当前 origin 自动连接 `/ws`，无需填写服务器或 WebSocket 地址。输入昵称和 Room Key 后以 Spectator 加入；Host 分配角色后页面会自动切换为 Player UI。
 
-旧普通 TUI 仍可连接完全相同的 Public handler（protocol v2 后需要 Room Key）：
+旧普通 TUI 仍可连接完全相同的 Public handler（当前 protocol v3）：
 
 ```bash
 python client/terminal.py --uri ws://SERVER_IP:8080/ws --name Alice --room-key K7M4-PQ9D
@@ -188,7 +191,7 @@ python client/terminal.py --uri ws://SERVER_IP:8080/ws --name Bob --room-key K7M
 
 未提供 `--room-key` 时读取 `ROOM_KEY` 环境变量；服务器使用 `--no-room-key` 启动时，TUI 可直接连接、无需任何 Key。
 
-每个新连接都是运行时 User，默认身份为 Spectator；连接顺序不会自动决定 A/B。普通 User 最多同时在线 100 人，Host 是独立连接，不占此名额。同名用户同时在线时，新连接会被拒绝。
+每个新连接都是运行时 User，默认身份为 Spectator；连接顺序不会自动决定角色。普通 User 最多同时在线 100 人，Host 是独立连接，不占此名额。同名用户同时在线时，新连接会被拒绝。
 
 在服务器主机上另开终端启动独立 Host TUI：
 
@@ -196,17 +199,17 @@ python client/terminal.py --uri ws://SERVER_IP:8080/ws --name Bob --room-key K7M
 python client/host.py --uri ws://127.0.0.1:8766
 ```
 
-Host 使用独立的 loopback-only listener，Public `/ws` 永远拒绝 `join_host`；权限不依赖来源 IP 判断，因此把 Web 端放到反向代理或 Tunnel 后也不会间接暴露 Host。若需从另一台管理设备操作，可使用 SSH 本地端口转发。Host TUI 会列出房间内所有当前在线昵称。选择两名 User 后输入：
+Host 使用独立的 loopback-only listener，Public `/ws` 永远拒绝 `join_host`；权限不依赖来源 IP 判断，因此把 Web 端放到反向代理或 Tunnel 后也不会间接暴露 Host。若需从另一台管理设备操作，可使用 SSH 本地端口转发。Host TUI 会列出房间内所有当前在线昵称。按 `roles.json` 顺序提供与角色数量完全相同的昵称：
 
 ```text
-/assign Alice Bob
+/assign Alice Bob Carol
 ```
 
-表示 Alice → Player A、Bob → Player B。其他在线 User 继续作为 Spectator。
+在三角色剧本中表示 Alice → P1、Bob → P2、Carol → P3。其他在线 User 继续作为 Spectator。
 
-`/assign` 可以重复用于换人，但当前仍有扮演者的 A、B 都必须处于 `PAUSED`；没有扮演者的角色视为空位。AI 正在 `PROCESSING` 时不允许换人。只有 role 实际变化的 User 会收到 UI reset 和完整角色视图；未变化的 Player 保留原状态。新接管角色进入 `EDITING` 且 Draft 为空，原 Player 降为 Spectator 并默认继续查看其原角色。
+`/assign` 可以重复用于换人，但当前已有扮演者的所有角色都必须处于 `PAUSED`；没有扮演者的角色视为空位。AI 正在 `PROCESSING` 时不允许换人。只有 role 实际变化的 User 会收到 UI reset 和完整角色视图；未变化的 Player 保留原状态。新接管角色进入 `EDITING` 且 Draft 为空，原 Player 降为 Spectator 并默认继续查看其原角色。
 
-Player/Spectator TUI 上方的可滚动文字框显示当前角色历史、Room Chat 和角色状态栏，中间只显示 A/B 工作状态，底部是多行 Draft 与单行 Command。状态栏不再占用独立的常驻区域；无论载入历史还是实时完成新一轮，每轮都按“行动 → 输出 → 状态栏”完整显示。状态栏使用绿色框线，内容仍以 YAML 展示。`public_information` 仅作为 Narrator 的共享创作输入，不直接展示给玩家。
+Player/Spectator TUI 上方的可滚动文字框显示当前角色历史、Room Chat 和角色状态栏，中间动态显示全部角色工作状态，底部是多行 Draft 与单行 Command。状态栏不再占用独立的常驻区域；无论载入历史还是实时完成新一轮，每轮都按“行动 → 输出 → 状态栏”完整显示。状态栏使用绿色框线，内容仍以 YAML 展示。`public_information` 仅作为 Narrator 的共享创作输入，不直接展示给玩家。
 
 Player 命令：
 
@@ -214,24 +217,24 @@ Player 命令：
 - `/submit`：从 Draft TextArea 读取并提交当前完整行动；提交后内容保持可见但只读。
 - `/cancel`：从 `READY` 返回 `EDITING`，保留原 Draft 并恢复编辑。
 - `/pause`、`/resume`：暂停或恢复编辑。
-- `/status`：只显示当前角色自己的状态栏；A/B 协作状态始终由输入框上方的实时状态区域显示。
+- `/status`：只显示当前角色自己的状态栏；全部角色状态始终由输入框上方的实时状态区域显示。
 - `/chat`：把当前 Draft 作为 Room Chat 发送并清空，不改变角色状态，也不进入 AI history。
 - `/help`：在本地显示 Player 可用命令，不向服务器发送消息。
 - `/quit`：退出客户端。
 
-Spectator 命令：`/chat`、`/view A`、`/view B`、`/help`、`/quit`。Spectator 的 Draft 只用于 Room Chat，不能执行游戏控制命令；其 Draft 和 Command 灰色占位提示也只列出观众用途与命令，不会显示 `/submit`、`/pause` 等玩家命令。
+Spectator 命令：`/chat`、`/view P1` ... `/view PN`、`/help`、`/quit`。Spectator 的 Draft 只用于 Room Chat，不能执行游戏控制命令；其 Draft 和 Command 灰色占位提示也只列出观众用途与命令，不会显示 `/submit`、`/pause` 等玩家命令。
 
-Host 命令：`/assign <nicknameA> <nicknameB>`、`/chat`、`/view A`、`/view B`、`/view world`、`/status`、`/retry`、`/help`、`/quit`。`/retry` 只属于 Host。三种身份的 `/help` 都由 TUI 本地处理，只显示当前身份可用命令。
+Host 命令：`/assign <nickname1> ... <nicknameN>`、`/chat`、`/view P1` ... `/view PN`、`/view world`、`/status`、`/retry`、`/help`、`/quit`。`/retry` 只属于 Host。三种身份的 `/help` 都由 TUI 本地处理，只显示当前身份可用命令。
 
 以上 Slash command 只用于 TUI。Web Client 使用明确按钮，并把 Action Draft 与 Chat Draft 分开；Player 即使处于 `READY`、`PAUSED` 或 `PROCESSING`，仍可继续使用 Room Chat。TUI 仍保留原来的单 Draft 行为。
 
-双方提交后进入 `PROCESSING`。服务器只在阶段切换时广播 `WORLD_UPDATING`、`VIEW_GENERATING`、`NARRATION_GENERATING`，客户端在本地按秒计时并显示“世界更新中 · 3s”等状态。AI 完成后各自收到私有 Narration，服务器进入下一轮并清空旧 Draft。
+全部角色提交后进入 `PROCESSING`。服务器只在阶段切换时广播 `WORLD_UPDATING`、`VIEW_GENERATING`、`NARRATION_GENERATING`，客户端在本地按秒计时并显示“世界更新中 · 3s”等状态。AI 完成后各自收到私有 Narration，服务器进入下一轮并清空旧 Draft。
 
-Host TUI 与普通客户端使用相同的 Identity、主视图、A/B 状态、Draft 和 Command 布局，并额外显示所有在线用户。它也不保留独立 Statusbar 区域：`/view A`、`/view B` 会在主文字框中逐轮显示行动、输出和绿色框线的状态栏；`/view world` 以 YAML 显示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`。完整调试数据不会发送给普通 User。
+Host TUI 与普通客户端使用相同的 Identity、主视图、动态角色状态、Draft 和 Command 布局，并额外显示所有在线用户。`/view P1` ... `/view PN` 会在主文字框中逐轮显示行动、输出和绿色框线的状态栏；`/view world` 以 YAML 显示完整的 `world_state`、`public_information`、`player_views` 和 `player_statusbar`。完整调试数据不会发送给普通 User。
 
 ### Story Plane 与 Room Plane
 
-Story Plane 包含 A/B Action、World Update、Player View、Narration 和 Statusbar，数据会按角色持久化并可进入 AI 上下文。
+Story Plane 包含所有角色的 Action、World Update、Player View、Narration 和 Statusbar，数据会按角色持久化并可进入 AI 上下文。
 
 Room Plane 包含 Presence、系统通知和 Host/Player/Spectator 真人聊天，只在当前服务器进程内广播，不写入 `chat_messages`，永远不会进入 World Updater 或 Narrator history。
 
@@ -239,11 +242,12 @@ Room Chat 统一使用 `room_message` 协议。客户端按 `kind` 渲染：`[�
 
 ### 角色 View 与历史顺序
 
-Player 固定查看自己的角色；Spectator 可用 `/view A|B`，Host 可额外 `/view world`。角色视图中的已完成回合按以下顺序重建到上方文字框：
+Player 固定查看自己的角色；Spectator 可用 `/view P1...PN`，Host 可额外 `/view world`。角色视图首先显示该角色的静态 Opening，然后按以下顺序重建已完成回合：
 
-1. 该角色提交的 Action
-2. 该角色收到的 Narration
-3. 该回合结束后的 Statusbar
+1. Opening（不属于任何回合）
+2. 该角色提交的 Action
+3. 该角色收到的 Narration
+4. 该回合结束后的 Statusbar
 
 每个已完成回合都是不可拆分的 Action → Narration → Statusbar 记录。TUI 重建历史时逐轮展示三者；新回合完成时，当前打开该角色视图的 Player、Spectator 或 Host 也会立即追加“本轮行动 → 本轮输出 → 本轮状态栏”，无需重新执行 `/view`。
 
@@ -253,23 +257,23 @@ Spectator 和 Host role view 不包含当前 Draft。只有当前真正扮演该
 
 - `joined`：连接身份、初始 spectator 状态与 `resume_token`。
 - `resumed`：resume 成功后的身份与角色恢复结果。
-- `presence`：当前在线 User 列表及其 A/B role、connected 状态。
+- `presence`：当前在线 User 列表及其动态 role、connected 状态。
 - `identity_changed`：仅发给 assign/reassign 后 role 真正变化的 User，要求 reset UI。
 - `role_assigned`：房间级角色绑定结果。
-- `role_view`：按角色重建的历史、当前状态栏；Player 私有版本可额外含 Draft 和当前 View。
+- `role_view`：角色静态 `opening`、按角色重建的历史及当前状态栏；Player 私有版本可额外含 Draft 和当前 View。
 - `role_round`：新完成回合的 Action→Narration→Statusbar。
 - `room_message`：统一的 system/host/player/spectator Room Chat。
-- `state`、`processing_stage`：A/B 工作状态与 AI 阶段。
+- `state`、`processing_stage`：全部角色工作状态与 AI 阶段。
 - `world_update`、`world_view`：仅 Host world view 使用的完整调试数据。
 
-`joined`/`resumed`（以及 Host 的 `host_joined`）包含 `protocol_version: 2`。浏览器会拒绝不支持的未来版本并显示明确错误。
+`joined`/`resumed`（以及 Host 的 `host_joined`）包含 `protocol_version: 3` 和按顺序排列的 `roles: [{"id":"P1","name":"…"}, ...]`。客户端必须使用该列表，不自行猜测角色数量或顺序。
 
 Public WebSocket 的第一条消息只允许 `join`（带 `name` + `room_key`）或 `resume`（带 `name` + `room_key` + `resume_token`）；`join_host` 永远被拒绝。
 
 关键 Room Plane payload 示例：
 
 ```json
-{"type":"presence","users":[{"name":"Alice","role":"A"},{"name":"Tom","role":null}]}
+{"type":"presence","users":[{"name":"Alice","role":"P1"},{"name":"Tom","role":null}]}
 ```
 
 ```json
@@ -277,7 +281,7 @@ Public WebSocket 的第一条消息只允许 `join`（带 `name` + `room_key`）
   "type": "room_message",
   "kind": "player",
   "sender": "Alice",
-  "role": "A",
+  "role": "P1",
   "character_name": "林岚",
   "text": "我觉得这里先不要开门。"
 }
@@ -293,9 +297,9 @@ Web Client 在连接意外断开后自动用 exponential backoff（1s → 2s →
 
 玩家主动点击“返回登录页”或 TUI `/quit` 会先发送 `{"type":"leave"}`：立即释放 nickname/role、invalidate resume token，不进入宽限期。
 
-角色历史、世界状态、A/B 状态栏和 AI Recovery 数据仍按角色保留；原 Player 离开后该角色显示“无人扮演”。
+角色历史、世界状态、全部角色状态栏和 AI Recovery 数据仍按角色保留；原 Player 离开后该角色显示“无人扮演”。
 
-服务器重启时在线 User 与角色绑定均为空，Host 必须重新 assign；服务器仍会从 SQLite 保存的 AI 阶段继续处理，不重复已经成功完成的 World Update。旧数据库启动时会删除旧 `participants` 表，并新增逐回合 `player_statusbars` 表；旧回合没有历史 statusbar 快照时不会伪造数据。
+服务器重启时在线 User 与角色绑定均为空，Host 必须重新 assign；服务器仍会从 SQLite 保存的 AI 阶段继续处理，不重复已经成功完成的 World Update。本轮数据库 schema 改为动态角色并新增 `round_actions`；旧的固定双角色 `game.db` 不做迁移，请重新创建 Game Instance。
 
 ## Room Key
 
@@ -313,7 +317,7 @@ Room Key 只存在服务器运行时或 `.env`，不写数据库、不进入 gam
 
 ## Web 加入与手机 UI
 
-浏览器打开 `http://SERVER_IP:8080/`，输入昵称（启用 Key 时还需 Room Key）即可加入。移动端为 Story / Chat 双 tab 布局，桌面宽屏自动变为 Story(70%) + Chat(30%) 双栏；Story 历史与追加输出都在面板内竖向滚动，Chat 同理。字号由 `.env` 的 `UI_FONT_SCALE` 控制（默认 0.7，范围 0.4–1.5），整体为低饱和紫色深色主题，状态栏默认折叠、点击展开。
+浏览器打开 `http://SERVER_IP:8080/`，输入昵称（启用 Key 时还需 Room Key）即可加入。移动端为 Story / Chat 双 tab 布局，桌面宽屏自动变为 Story(70%) + Chat(30%) 双栏；Story 历史与追加输出都在面板内竖向滚动，Chat 同理。字号由 `.env` 的 `UI_FONT_SCALE` 控制（默认 0.8，范围 0.4–1.5），整体为低饱和紫色深色主题，状态栏默认折叠、点击展开。
 
 
 ## 仅作为远程客户端

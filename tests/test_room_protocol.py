@@ -41,7 +41,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             await database.initialize()
             server = GameServer(
                 database, None, None, None,
-                character_names={"A": "林岚", "B": "周砚"},
+                character_names={"P1": "林岚", "P2": "周砚"},
             )
             alice, bob, tom, host = (FakeConnection() for _ in range(4))
             await server.sessions.join("Alice", alice)
@@ -49,30 +49,33 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             await server.sessions.join("Tom", tom)
             await server.sessions.join_host(host)
             await server._handle_host_command(host, json.dumps({
-                "type": "assign_roles", "player_a": "Alice", "player_b": "Bob"
+                "type": "assign_roles",
+                "assignments": {"P1": "Alice", "P2": "Bob"},
             }))
-            server.rounds.set_action("A", "private draft")
+            server.rounds.set_action("P1", "private draft")
 
             await server._handle_host_command(host, json.dumps({
-                "type": "assign_roles", "player_a": "Tom", "player_b": "Bob"
+                "type": "assign_roles",
+                "assignments": {"P1": "Tom", "P2": "Bob"},
             }))
-            self.assertEqual(await server.sessions.role_for("Alice"), "A")
+            self.assertEqual(await server.sessions.role_for("Alice"), "P1")
             self.assertEqual(host.messages[-1]["type"], "error")
 
-            server.rounds.pause("A")
-            server.rounds.pause("B")
+            server.rounds.pause("P1")
+            server.rounds.pause("P2")
             for connection in (alice, bob, tom, host):
                 connection.messages.clear()
             await server._handle_host_command(host, json.dumps({
-                "type": "assign_roles", "player_a": "Tom", "player_b": "Bob"
+                "type": "assign_roles",
+                "assignments": {"P1": "Tom", "P2": "Bob"},
             }))
 
             self.assertIsNone(await server.sessions.role_for("Alice"))
-            self.assertEqual(await server.sessions.role_for("Tom"), "A")
-            self.assertEqual(await server.sessions.role_for("Bob"), "B")
-            self.assertEqual(server.rounds.players["A"].status, PlayerStatus.EDITING)
-            self.assertEqual(server.rounds.players["A"].action, "")
-            self.assertEqual(server.rounds.players["B"].status, PlayerStatus.PAUSED)
+            self.assertEqual(await server.sessions.role_for("Tom"), "P1")
+            self.assertEqual(await server.sessions.role_for("Bob"), "P2")
+            self.assertEqual(server.rounds.players["P1"].status, PlayerStatus.EDITING)
+            self.assertEqual(server.rounds.players["P1"].action, "")
+            self.assertEqual(server.rounds.players["P2"].status, PlayerStatus.PAUSED)
             self.assertTrue(any(m["type"] == "identity_changed" for m in alice.messages))
             self.assertTrue(any(m["type"] == "role_view" for m in alice.messages))
             alice_view = next(m for m in alice.messages if m["type"] == "role_view")
@@ -84,7 +87,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             ))
             presence = next(m for m in reversed(host.messages) if m["type"] == "presence")
             roles = {item["name"]: item["role"] for item in presence["users"]}
-            self.assertEqual(roles, {"Alice": None, "Bob": "B", "Tom": "A"})
+            self.assertEqual(roles, {"Alice": None, "Bob": "P2", "Tom": "P1"})
 
     async def test_room_chat_is_structured_and_never_enters_ai_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -92,18 +95,18 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             await database.initialize()
             server = GameServer(
                 database, None, None, None,
-                character_names={"A": "林岚", "B": "周砚"},
+                character_names={"P1": "林岚", "P2": "周砚"},
             )
             alice, bob, tom, host = (FakeConnection() for _ in range(4))
             await server.sessions.join("Alice", alice)
             await server.sessions.join("Bob", bob)
             await server.sessions.join("Tom", tom)
             await server.sessions.join_host(host)
-            await server.sessions.assign_roles("Alice", "Bob")
-            server.rounds.set_action("A", "unsubmitted secret")
+            await server.sessions.assign_roles({"P1": "Alice", "P2": "Bob"})
+            server.rounds.set_action("P1", "unsubmitted secret")
 
             await server._handle_command(
-                "Tom", tom, json.dumps({"type": "view", "role": "A"})
+                "Tom", tom, json.dumps({"type": "view", "role": "P1"})
             )
             spectator_view = tom.messages[-1]
             self.assertEqual(spectator_view["type"], "role_view")
@@ -125,12 +128,12 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 (player_message["kind"], player_message["sender"],
                  player_message["role"], player_message["character_name"]),
-                ("player", "Alice", "A", "林岚"),
+                ("player", "Alice", "P1", "林岚"),
             )
             self.assertEqual(spectator_message["kind"], "spectator")
             self.assertEqual(host_message["kind"], "host")
-            self.assertEqual(await database.get_chat_history("A"), [])
-            self.assertEqual(server.rounds.players["A"].status, PlayerStatus.EDITING)
+            self.assertEqual(await database.get_chat_history("P1"), [])
+            self.assertEqual(server.rounds.players["P1"].status, PlayerStatus.EDITING)
 
             await server._handle_command("Tom", tom, json.dumps({"type": "submit"}))
             await server._handle_command(

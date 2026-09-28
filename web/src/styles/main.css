@@ -14,21 +14,19 @@
   --warn: #c9a45c;
   --info: #7c93c9;
   color-scheme: dark;
-  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   color: var(--text);
   background: var(--bg);
 }
+:root, html, body, #root {
+  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC", sans-serif;
+}
 html { font-size: calc(16px * var(--font-scale, 0.7)); }
 * { box-sizing: border-box; }
-html, body, button, input, textarea, select, h1, h2, h3, h4, h5, h6,
-p, span, a, strong, b, em, i, label, summary, dt, dd, li {
-  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-}
 html, body, #root { height: 100%; }
 body { margin: 0; min-width: 0; }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button {
   min-height: 34px; border: 0; border-radius: 8px; padding: .35rem .7rem;
   color: #ece8f7; background: var(--accent); cursor: pointer;
@@ -36,7 +34,7 @@ button {
 button:disabled { opacity: .45; cursor: default; }
 button.secondary { background: #2a2640; }
 button.active { background: var(--accent-2); }
-textarea, input {
+textarea, input, select {
   width: 100%; border: 1px solid #3a3457; border-radius: 8px; padding: .5rem .6rem;
   color: var(--text); background: var(--surface); font-size: 1rem;
 }
@@ -75,19 +73,10 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .conn-error, .conn-session_expired, .conn-disconnected { color: var(--danger); }
 @keyframes pulse { 50% { opacity: .45; } }
 
-.view-toggle {
-  flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: .08rem;
-  min-height: 0; padding: .3rem .55rem; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--surface-2); color: var(--text); cursor: pointer; text-align: right;
-}
-.view-toggle .view-current { font-size: .78rem; }
-.view-toggle .view-hint { font-size: .7rem; color: var(--text-muted); }
-.view-toggle .view-hint b { color: var(--warn); font-weight: 600; }
-
 .panel { min-width: 0; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .button-row { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
 
-/* One row of three bubbles: Round + two players */
+/* Round plus a dynamic row of role states */
 .top-status-row { flex: none; display: flex; gap: .4rem; align-items: stretch; }
 .round-bubble {
   flex: none; display: flex; align-items: center; gap: .25rem;
@@ -96,7 +85,7 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 }
 .round-bubble .processing { color: var(--info); }
 
-/* A/B states: two single-line bubbles with real character names */
+/* Dynamic role states with real character names */
 .player-states { flex: 1; min-width: 0; display: flex; gap: .4rem; }
 .player-state {
   flex: 1; min-width: 0; display: flex; align-items: center;
@@ -113,11 +102,13 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 
 /* Mobile tabs (hidden on desktop) */
 .mobile-tabs { flex: none; display: flex; gap: .4rem; }
-.mobile-tabs button {
+.mobile-tabs button, .role-view-tabs button {
   flex: 1; min-height: 24px; padding: .12rem .5rem;
   font-size: .72rem; background: rgba(90, 77, 158, 0.38); color: var(--text);
 }
-.mobile-tabs button.active { background: var(--accent); color: #ece8f7; }
+.mobile-tabs button.active, .role-view-tabs button.active {
+  background: var(--accent); color: #ece8f7;
+}
 .unread { color: var(--warn); font-weight: 700; }
 
 /* Main grid: bounded internal scroll on both mobile and desktop */
@@ -126,8 +117,15 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .main-grid.tab-chat .story-panel { display: none; }
 .story-panel, .chat-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .story-view, .chat-view { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.story-header { flex: none; display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .55rem; }
+.story-header { flex: none; display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-bottom: .55rem; }
 .story-header h2 { margin: 0; }
+.role-view-tabs {
+  min-width: 0; display: flex; justify-content: flex-end; gap: .3rem;
+  overflow-x: auto; scrollbar-width: thin;
+}
+.role-view-tabs button { flex: none; opacity: .55; white-space: nowrap; }
+.role-view-tabs button.active { opacity: 1; }
+.role-view-tabs button:disabled { cursor: default; }
 .chat-view h2 { flex: none; }
 
 /* Story */
@@ -140,11 +138,12 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .story-kind { margin-bottom: .25rem; font-size: .72rem; color: var(--text-dim); letter-spacing: .03em; }
 .story-action { border-left: 3px solid #8a6d3b; }
 .story-narration { border-left: 3px solid #5c63a8; }
+.story-opening { border-left: 3px solid var(--accent); }
+.dialogue-quote { color: #c9a45c; }
 .statusbar-card { margin-bottom: .6rem; border: 1px solid #2c4a38; border-radius: 8px; background: #141c2b; overflow: hidden; }
 .statusbar-card summary { padding: .4rem .55rem; cursor: pointer; color: var(--success); font-size: .78rem; }
 .statusbar-card[open] summary { border-bottom: 1px solid #2c4a38; }
 .statusbar-card .status-tree { margin: .45rem .55rem; font-size: .85rem; }
-.spectator-hint { margin: 0; font-size: .72rem; color: var(--text-muted); }
 .jump-latest { display: block; margin: .3rem auto; }
 
 /* Status tree: key and value stay on one line, only separated by a space */
@@ -190,7 +189,6 @@ dl.status-tree > div {
 
 @media (max-width: 759px) {
   .game-header { flex-wrap: wrap; gap: .3rem; }
-  .view-toggle { align-items: flex-start; text-align: left; }
   .chat-compose { grid-template-columns: 1fr; }
   .chat-compose button { width: 100%; }
   .disconnect-banner button { margin: .35rem .3rem 0 0; }

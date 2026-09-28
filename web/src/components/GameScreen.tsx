@@ -1,5 +1,5 @@
 import type { ClientState, MobileTab } from "../state";
-import type { ClientMessage, Role } from "../protocol";
+import type { ClientMessage } from "../protocol";
 import { Composer } from "./Composer";
 import { PlayerStates } from "./PlayerStates";
 import { RoomChat } from "./RoomChat";
@@ -29,13 +29,6 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, s
   const ownStatus = state.role ? state.players[state.role]?.status : undefined;
   const disconnected = state.connection !== "CONNECTED";
   const ownCharacter = state.role ? state.players[state.role]?.character_name : null;
-  const nameA = state.players.A?.character_name || "A";
-  const nameB = state.players.B?.character_name || "B";
-  const currentView: Role = state.viewRole ?? "A";
-  const otherView: Role = currentView === "A" ? "B" : "A";
-  const currentName = currentView === "A" ? nameA : nameB;
-  const otherName = otherView === "A" ? nameA : nameB;
-
   return <main className="game-shell">
     <header className="game-header">
       <div className="header-id">
@@ -46,11 +39,6 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, s
           <span className="muted">{state.presence.length} 人在线</span>
         </p>
       </div>
-      {!state.role && <button className="view-toggle" disabled={disconnected}
-        onClick={() => send({ type: "view", role: otherView })}>
-        <span className="view-current">当前视角：{currentName}</span>
-        <span className="view-hint">点击切换为 <b>{otherName}</b> 视角</span>
-      </button>}
     </header>
     {state.connection === "RECONNECTING" && <div className="disconnect-banner">
       正在重新连接… 若超过 60 秒仍未恢复，会话可能已失效。
@@ -59,7 +47,7 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, s
     {state.errors.length > 0 && <div className="error-banner">{state.errors.at(-1)}</div>}
     <div className="top-status-row">
       <RoundView round={state.round} stage={state.processingStage} />
-      <PlayerStates players={state.players} />
+      <PlayerStates players={state.players} roles={state.roles} />
     </div>
     <nav className="mobile-tabs">
       <button className={state.mobileTab === "story" ? "active" : ""} onClick={() => setTab("story")}>剧情</button>
@@ -70,7 +58,9 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, s
     <div className={`main-grid ${state.mobileTab === "story" ? "tab-story" : "tab-chat"}`}>
       <section className="panel story-panel">
         <StoryView entries={state.storyEntries} viewRole={state.viewRole} characterName={state.characterName}
-          spectator={!state.role} />
+          opening={state.opening}
+          spectator={!state.role} roles={state.roles} viewDisabled={disconnected}
+          onView={(role) => send({ type: "view", role })} />
         {state.role && <Composer draft={state.actionDraft} status={ownStatus} disabled={disconnected}
           onDraft={setAction} onSubmit={() => { send({ type: "action", text: state.actionDraft }); send({ type: "submit" }); }}
           onCancel={() => send({ type: "cancel_submit" })}

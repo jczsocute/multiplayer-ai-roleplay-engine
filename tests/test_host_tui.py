@@ -22,7 +22,8 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
                 "type": "role_view",
-                "role": "B",
+                "role": "P2",
+                "opening": "Host 看到的开场",
                 "history": [
                     {"round": 1, "kind": "action", "content": "观察窗外"},
                     {"round": 1, "kind": "narration", "content": "雨幕遮住远处"},
@@ -34,6 +35,7 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
             rendered = "\n".join(
                 line.text for line in app.query_one("#host-history", RichLog).lines
             )
+            self.assertLess(rendered.index("Host 看到的开场"), rendered.index("第 1 轮行动"))
             self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
             self.assertLess(rendered.index("第 1 轮输出"), rendered.index("第 1 轮状态栏"))
             self.assertIn("法力", rendered)
@@ -43,11 +45,11 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_round_renders_action_narration_and_statusbar(self) -> None:
         app = TestHostApp()
         async with app.run_test(size=(100, 36)):
-            app.view = "A"
+            app.view = "P1"
             await app._handle_message({
                 "type": "role_round",
                 "round": 3,
-                "role": "A",
+                "role": "P1",
                 "entries": [
                     {"kind": "action", "content": "点亮提灯"},
                     {"kind": "narration", "content": "灯光照亮走廊"},
@@ -63,9 +65,10 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertLess(rendered.index("本轮输出"), rendered.index("本轮状态栏"))
             self.assertIn("点亮提灯", rendered)
 
-    async def test_assign_command_maps_two_player_names(self) -> None:
+    async def test_assign_command_maps_two_role_names(self) -> None:
         app = TestHostApp()
         async with app.run_test(size=(100, 32)) as pilot:
+            app.roles = [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}]
             command = app.query_one("#host-command", Input)
             command.value = "/assign Chengzhe Alice"
             command.focus()
@@ -75,28 +78,28 @@ class HostTuiTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(app.sent, [{
                 "type": "assign_roles",
-                "player_a": "Chengzhe",
-                "player_b": "Alice",
+                "assignments": {"P1": "Chengzhe", "P2": "Alice"},
             }])
             self.assertEqual(command.value, "")
 
     async def test_host_chat_view_and_retry_commands(self) -> None:
         app = TestHostApp()
         async with app.run_test(size=(100, 36)) as pilot:
+            app.roles = [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}]
             draft = app.query_one("#host-draft", TextArea)
             command = app.query_one("#host-command", Input)
             draft.load_text("稍等，我重新分配。")
             command.value = "/chat"
             command.focus()
             await pilot.press("enter")
-            command.value = "/view A"
+            command.value = "/view P1"
             await pilot.press("enter")
             command.value = "/retry"
             await pilot.press("enter")
 
             self.assertEqual(app.sent, [
                 {"type": "room_chat", "text": "稍等，我重新分配。"},
-                {"type": "view", "view": "A"},
+                {"type": "view", "view": "P1"},
                 {"type": "retry_ai"},
             ])
             self.assertEqual(draft.text, "")

@@ -28,25 +28,13 @@ STATUS_LABELS = {
     "PROCESSING": ("处理中", "blue"),
 }
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 PROCESSING_LABELS = {
     "WORLD_UPDATING": "世界更新中",
     "VIEW_GENERATING": "视角补全中",
     "NARRATION_GENERATING": "文段生成中",
 }
-
-HOST_HELP = """Host 命令：
-/assign <A昵称> <B昵称>  分配或重新分配角色
-/chat                    将 Draft 发送到房间聊天
-/view A                  查看 Player A 角色历史
-/view B                  查看 Player B 角色历史
-/view world              查看完整世界调试信息
-/status                  查询当前游戏状态
-/retry                   重试失败的 AI 阶段
-/help                    显示本帮助
-/quit                    退出 Host TUI"""
-
 
 class HostApp(App):
     CSS_PATH = Path(__file__).with_name("host.css")
@@ -62,6 +50,7 @@ class HostApp(App):
         self.websocket = None
         self.users: list[dict] = []
         self.players: dict = {}
+        self.roles: list[dict] = []
         self.view = "world"
         self.processing_stage: str | None = None
         self.processing_started = 0.0
@@ -70,12 +59,12 @@ class HostApp(App):
         yield Static("正在连接服务器…", id="host-identity")
         yield RichLog(id="host-history", wrap=True, markup=False, auto_scroll=False)
         yield Static("房间内所有用户\n（暂无）", id="host-presence")
-        yield Static("A ■ 无人扮演        B ■ 无人扮演", id="host-collaboration")
+        yield Static("等待角色信息…", id="host-collaboration")
         yield Static("Draft：", id="host-draft-label")
         yield TextArea("", placeholder="Host 房间聊天 Draft", id="host-draft")
         yield Static("Command：", id="host-command-label")
         yield Input(
-            placeholder="/assign <A昵称> <B昵称> /chat /view A|B|world /status /retry /help /quit",
+            placeholder="/assign <昵称1> … <昵称N> /chat /view P1…PN|world /status /retry /help /quit",
             id="host-command",
         )
 
@@ -103,6 +92,7 @@ class HostApp(App):
                 raise ValueError(
                     f"不支持的协议版本：{message.get('protocol_version')}（客户端支持 {PROTOCOL_VERSION}）"
                 )
+            self.roles = message.get("roles", [])
             self.query_one("#host-identity", Static).update(
                 f"Host · Scenario: {message.get('scenario', '')} · View: {self.view}"
             )
@@ -156,18 +146,34 @@ class HostApp(App):
             self.exit()
             return
         if command == "/help":
-            self._append(Panel(HOST_HELP, title="命令帮助", border_style="cyan"))
+            roles = "\n".join(
+                f"/view {item['id']}  查看 {item['name']} 角色历史" for item in self.roles
+            )
+            help_text = (
+                "Host 命令：\n"
+                f"/assign <昵称1> … <昵称{len(self.roles)}>  按角色顺序分配或重新分配\n"
+                "/chat                    将 Draft 发送到房间聊天\n"
+                f"{roles}\n"
+                "/view world              查看完整世界调试信息\n"
+                "/status                  查询当前游戏状态\n"
+                "/retry                   重试失败的 AI 阶段\n"
+                "/help                    显示本帮助\n"
+                "/quit                    退出 Host TUI"
+            )
+            self._append(Panel(help_text, title="命令帮助", border_style="cyan"))
             return
         try:
             parts = shlex.split(command)
         except ValueError as exc:
             self._append(Text(f"命令格式错误：{exc}", style="yellow"))
             return
-        if len(parts) == 3 and parts[0] == "/assign":
+        if len(parts) == len(self.roles) + 1 and parts[0] == "/assign":
             await self._send({
                 "type": "assign_roles",
-                "player_a": parts[1],
-                "player_b": parts[2],
+                "assignments": {
+                    role["id"]: nickname
+                    for role, nickname in zip(self.roles, parts[1:])
+                },
             })
             return
         if parts == ["/chat"]:
@@ -178,8 +184,11 @@ class HostApp(App):
             await self._send({"type": "room_chat", "text": text})
             self.query_one("#host-draft", TextArea).load_text("")
             return
-        if len(parts) == 2 and parts[0] == "/view" and parts[1] in ("A", "B", "world"):
-            self.view = parts[1]
+        role_ids = {item["id"] for item in self.roles}
+        if len(parts) == 2 and parts[0] == "/view" and (
+            parts[1].upper() in role_ids or parts[1] == "world"
+        ):
+            self.view = parts[1] if parts[1] == "world" else parts[1].upper()
             self.query_one("#host-identity", Static).update(f"Host · View: {self.view}")
             await self._send({"type": "view", "view": self.view})
             return
@@ -200,7 +209,8 @@ class HostApp(App):
 
     def _render_collaboration(self) -> None:
         line = Text()
-        for index, role in enumerate(("A", "B")):
+        role_ids = [item["id"] for item in self.roles] or list(self.players)
+        for index, role in enumerate(role_ids):
             state = self.players.get(role, {})
             connected = state.get("connected", False)
             status = state.get("status", "EDITING")
@@ -234,10 +244,15 @@ class HostApp(App):
         self.view = message["role"]
         history = self.query_one("#host-history", RichLog)
         history.clear()
+        opening = str(message.get("opening", "")).strip()
+        if opening:
+            history.write(
+                Panel(opening, title="开场", border_style="cyan"), scroll_end=False
+            )
         entries = message.get("history", [])
         for item in entries:
             self._write_role_entry(history, int(item["round"]), item)
-        if not entries:
+        if not entries and not opening:
             history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
         history.scroll_end(animate=False)
 

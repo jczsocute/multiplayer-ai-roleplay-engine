@@ -10,7 +10,7 @@ from typing import Any
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
-from server.config import load_settings, normalize_room_key
+from server.config import load_role_limits, load_settings, normalize_room_key
 from server.database import Database
 from server.llm.client import LLMClient
 from server.llm.narrator import Narrator
@@ -24,6 +24,7 @@ from server.protocol import (
     PROTOCOL_VERSION,
 )
 from server.round_manager import RoundError, RoundManager
+from server.roles import RoleConfig
 from server.scenario_manager import ScenarioManager
 from server.session import Connection, Sessions
 
@@ -43,19 +44,33 @@ class GameServer:
         character_names: dict[str, str] | None = None,
         room_key: str = "test-key",
         disconnect_grace_seconds: int = 60,
+        role_config: RoleConfig | None = None,
+        openings: dict[str, str] | None = None,
     ) -> None:
+        if role_config is None:
+            role_ids = tuple(character_names or database.role_ids)
+            names = character_names or {role_id: role_id for role_id in role_ids}
+            role_config = RoleConfig(role_ids, names)
+        if tuple(database.role_ids) != role_config.role_ids:
+            raise ValueError("database roles and RoleConfig do not match")
+        self.role_config = role_config
+        self.role_ids = role_config.role_ids
         self.database = database
         self.world_updater = world_updater
         self.player_views = player_views
         self.narrator = narrator
-        self.rounds = RoundManager(round_number)
+        self.rounds = RoundManager(self.role_ids, round_number)
         self.sessions = Sessions(
+            self.role_ids,
             max_users=100, disconnect_grace_seconds=disconnect_grace_seconds
         )
         self.sessions.expiry_handler = self._on_grace_expired
         self.command_lock = asyncio.Lock()
         self.scenario_name = scenario_name
-        self.character_names = character_names or {"A": "Player A", "B": "Player B"}
+        self.character_names = role_config.names
+        if openings is not None and set(openings) != set(self.role_ids):
+            raise ValueError("openings must contain every role exactly once")
+        self.openings = openings or {role_id: "" for role_id in self.role_ids}
         self.room_key = room_key
         self.disconnect_grace_seconds = disconnect_grace_seconds
 
@@ -101,6 +116,7 @@ class GameServer:
                     "scenario": self.scenario_name,
                     "protocol_version": PROTOCOL_VERSION,
                     "resume_token": user.resume_token,
+                    "roles": self.role_config.definitions,
                 }, ensure_ascii=False))
                 await self._broadcast_presence()
                 await self._broadcast_state()
@@ -128,6 +144,7 @@ class GameServer:
                     "scenario": self.scenario_name,
                     "protocol_version": PROTOCOL_VERSION,
                     "resume_token": user.resume_token,
+                    "roles": self.role_config.definitions,
                 }, ensure_ascii=False))
                 await self._broadcast_presence()
                 await self._broadcast_state()
@@ -194,6 +211,7 @@ class GameServer:
                 "type": "host_joined",
                 "scenario": self.scenario_name,
                 "protocol_version": PROTOCOL_VERSION,
+                "roles": self.role_config.definitions,
             }, ensure_ascii=False))
             await websocket.send(json.dumps(
                 await self.sessions.presence_snapshot(), ensure_ascii=False
@@ -257,11 +275,14 @@ class GameServer:
                 return
             if command != "assign_roles":
                 raise ValueError("unknown host command")
+            assignments = message.get("assignments")
+            if not isinstance(assignments, dict) or not all(
+                isinstance(role, str) and isinstance(name, str)
+                for role, name in assignments.items()
+            ):
+                raise ValueError("assignments must be a role-to-username object")
             async with self.command_lock:
-                await self._assign_roles(
-                    str(message.get("player_a", "")),
-                    str(message.get("player_b", "")),
-                )
+                await self._assign_roles(assignments)
         except (RoundError, ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
 
@@ -299,7 +320,7 @@ class GameServer:
                     await self._send_role_view(websocket, role)
                     return
                 if player_id is None:
-                    raise RoundError("spectators may only use /chat, /view A, /view B, and /quit")
+                    raise RoundError("spectators may only use room chat, role view, and quit")
                 if command == "status":
                     await self._send_status(user_name, websocket)
                     return
@@ -330,14 +351,14 @@ class GameServer:
                     await self._broadcast_state()
 
                 if completed is not None:
-                    for current_id in ("A", "B"):
+                    for current_id in self.role_ids:
                         current = self.rounds.players[current_id]
                         await self.database.save_player(current_id, current.status, current.action)
                     await self._process_round(completed)
         except (RoundError, ValueError, json.JSONDecodeError) as exc:
             await self._send_error(websocket, str(exc))
 
-    async def _assign_roles(self, player_a: str, player_b: str) -> None:
+    async def _assign_roles(self, requested: dict[str, str]) -> None:
         if self.rounds.is_processing():
             raise RoundError("roles cannot be reassigned while AI processing is active")
         before = await self.sessions.role_assignments()
@@ -347,10 +368,10 @@ class GameServer:
                     "reassign requires each currently occupied role to be PAUSED or empty"
                 )
 
-        assignments = await self.sessions.assign_roles(player_a, player_b)
+        assignments = await self.sessions.assign_roles(requested)
         after = await self.sessions.role_assignments()
         changed_roles = [
-            role for role in ("A", "B") if before.get(role) != after.get(role)
+            role for role in self.role_ids if before.get(role) != after.get(role)
         ]
         for role in changed_roles:
             player = self.rounds.players[role]
@@ -382,7 +403,7 @@ class GameServer:
                 "view_role": user.view_role,
                 "reset": True,
             })
-            if user.view_role:
+            if user.view_role and user.websocket is not None:
                 await self._send_role_view(
                     user.websocket,
                     user.view_role,
@@ -394,7 +415,11 @@ class GameServer:
         await self._broadcast_state()
         await self._broadcast_room_message(
             "system",
-            f"Host 已完成角色分配：{player_a} → A，{player_b} → B。",
+            "Host 已完成角色分配："
+            + "，".join(
+                f"{requested[role]} → {role}" for role in self.role_ids
+            )
+            + "。",
         )
 
     async def _send_role_view(
@@ -405,13 +430,14 @@ class GameServer:
         include_draft: bool = False,
         include_current_view: bool = False,
     ) -> None:
-        if role not in ("A", "B"):
-            raise RoundError("role view must be A or B")
+        if role not in self.role_ids:
+            raise RoundError(f"unknown role: {role}")
         display = await self.database.get_player_display(role)
         message = {
             "type": "role_view",
             "role": role,
             "character_name": self.character_names[role],
+            "opening": self.openings[role],
             "history": await self.database.get_role_history(role),
             "statusbar": display["statusbar"],
             "reset": True,
@@ -463,8 +489,7 @@ class GameServer:
             current_world_state = await self.database.get_world_state()
             world_result = await self.world_updater.update(
                 current_world_state=current_world_state,
-                action_a=completed.actions["A"],
-                action_b=completed.actions["B"],
+                actions=completed.actions,
             )
             await self.database.save_world_update(completed, world_result)
             await self.sessions.send_host_view("world", {
@@ -491,7 +516,10 @@ class GameServer:
     async def _continue_views(self, completed: CompletedRound) -> None:
         await self._set_stage(RoundStage.VIEW_GENERATING)
         data = await self.database.get_recovery_data(completed.round_number)
-        missing = [player_id for player_id in ("A", "B") if player_id not in data["player_views"]]
+        missing = [
+            role_id for role_id in self.role_ids
+            if role_id not in data["player_views"]
+        ]
         if missing:
             results = await asyncio.gather(
                 *(self.player_views.generate(player_id, data["world_state"]) for player_id in missing),
@@ -517,7 +545,10 @@ class GameServer:
     async def _continue_narrations(self, completed: CompletedRound) -> None:
         await self._set_stage(RoundStage.NARRATION_GENERATING)
         data = await self.database.get_recovery_data(completed.round_number)
-        missing = [player_id for player_id in ("A", "B") if player_id not in data["narrations"]]
+        missing = [
+            role_id for role_id in self.role_ids
+            if role_id not in data["narrations"]
+        ]
         histories = await asyncio.gather(
             *(self.database.get_chat_history(player_id) for player_id in missing)
         )
@@ -564,7 +595,8 @@ class GameServer:
         data = await self.database.get_recovery_data(completed.round_number)
         await self.database.finish_round(completed)
         self.rounds.set_stage(RoundStage.FINISHED)
-        for player_id, narration in data["narrations"].items():
+        for player_id in self.role_ids:
+            narration = data["narrations"][player_id]
             display = await self.database.get_player_display(player_id)
             await self.sessions.send_viewers(
                 player_id,
@@ -718,11 +750,16 @@ async def run_server(game_path: Path, scenario_name: str, no_room_key: bool = Fa
         logger.info("Room Key: %s", settings.room_key)
     else:
         logger.info("Room Key: disabled (--no-room-key)")
-    loader = PromptLoader(str(game_path))
-    database = Database(str(game_path / "game.db"))
+    role_config = RoleConfig.load(
+        game_path / "roles.json",
+        min_count=settings.min_role_count,
+        max_count=settings.max_role_count,
+    )
+    loader = PromptLoader(str(game_path), role_config)
+    database = Database(str(game_path / "game.db"), role_config.role_ids)
     await database.initialize(
         loader.json("world/initial_state.json"),
-        {"A": loader.statusbar("A"), "B": loader.statusbar("B")},
+        {role_id: loader.statusbar(role_id) for role_id in role_config.role_ids},
     )
     llm = LLMClient(settings.llm_api_key, settings.llm_base_url, settings.llm_model)
     world_updater = WorldUpdater(llm, loader, settings.world_update_max_tokens)
@@ -735,9 +772,11 @@ async def run_server(game_path: Path, scenario_name: str, no_room_key: bool = Fa
         narrator,
         await database.current_round(),
         scenario_name,
-        {"A": loader.character_name("A"), "B": loader.character_name("B")},
+        role_config.names,
         room_key=settings.room_key,
         disconnect_grace_seconds=settings.disconnect_grace_seconds,
+        role_config=role_config,
+        openings={role_id: loader.opening(role_id) for role_id in role_config.role_ids},
     )
     await game.recover_round()
 
@@ -784,19 +823,31 @@ def main() -> None:
     management.add_argument("--create-scenario")
     management.add_argument("--delete-scenario")
     parser.add_argument("--game", default=None)
+    parser.add_argument("--role-count", type=int)
     parser.add_argument(
         "--no-room-key",
         action="store_true",
         help="start without a room key; web only asks for a nickname",
     )
     args = parser.parse_args()
-    manager = ScenarioManager()
+    try:
+        min_role_count, max_role_count = load_role_limits()
+        manager = ScenarioManager(
+            min_role_count=min_role_count, max_role_count=max_role_count
+        )
+    except (ValueError, RuntimeError) as exc:
+        parser.error(str(exc))
     if args.list_scenarios:
         print("\n".join(manager.list_scenarios()) or "No playable scenarios.")
         return
     if args.create_scenario:
         try:
-            path = manager.create_scenario(args.create_scenario)
+            role_count = args.role_count
+            if role_count is None:
+                role_count = int(input(
+                    f"请输入角色数量 [{min_role_count}-{max_role_count}]: "
+                ))
+            path = manager.create_scenario(args.create_scenario, role_count)
         except ValueError as exc:
             parser.error(str(exc))
         print(f"Created scenario: {path}")

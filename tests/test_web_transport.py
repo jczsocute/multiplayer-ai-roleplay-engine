@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 from server.database import Database
 from server.main import GameServer
 from server.protocol import MAX_ACTION_LENGTH, PROTOCOL_VERSION
+from server.roles import RoleConfig
 from server.web import create_web_app
 
 
@@ -17,8 +18,8 @@ class FakeUpdater:
         return {
             "world_state": {"place": "hall"},
             "public_information": {"time": "night"},
-            "player_views": {"A": {"seen": "door"}, "B": {"seen": "window"}},
-            "player_statusbar": {"A": {"hp": 10}, "B": {"hp": 20}},
+            "player_views": {"P1": {"seen": "door"}, "P2": {"seen": "window"}},
+            "player_statusbar": {"P1": {"hp": 10}, "P2": {"hp": 20}},
         }
 
 
@@ -30,6 +31,16 @@ class FakeViews:
 class FakeNarrator:
     async def narrate(self, player_id, *_args):
         return {"text": f"narration {player_id}", "status": {}}
+
+
+class DynamicUpdater:
+    async def update(self, current_world_state, actions):
+        return {
+            "world_state": {"place": "hall"},
+            "public_information": {},
+            "player_views": {role: {"seen": role} for role in actions},
+            "player_statusbar": {role: {"hp": 10} for role in actions},
+        }
 
 
 class SequenceConnection:
@@ -58,7 +69,7 @@ class WebTransportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         database = Database(str(Path(self.tempdir.name) / "game.db"))
-        asyncio.run(database.initialize({}, {"A": {"hp": 10}, "B": {"hp": 20}}))
+        asyncio.run(database.initialize({}, {"P1": {"hp": 10}, "P2": {"hp": 20}}))
         self.game = GameServer(
             database, FakeUpdater(), FakeViews(), FakeNarrator(), scenario_name="test"
         )
@@ -76,12 +87,13 @@ class WebTransportTests(unittest.TestCase):
             joined = websocket.receive_json()
             self.assertEqual(joined["type"], "joined")
             self.assertEqual(joined["protocol_version"], PROTOCOL_VERSION)
+            self.assertEqual([role["id"] for role in joined["roles"]], ["P1", "P2"])
             self.assertIn("resume_token", joined)
             self.assertEqual(websocket.receive_json()["type"], "presence")
             self.assertEqual(websocket.receive_json()["type"], "state")
             self.assertEqual(websocket.receive_json()["type"], "room_message")
 
-            websocket.send_json({"type": "view", "role": "A"})
+            websocket.send_json({"type": "view", "role": "P1"})
             role_view = websocket.receive_json()
             self.assertEqual(role_view["type"], "role_view")
             self.assertNotIn("draft", role_view)
@@ -114,12 +126,15 @@ class WebTransportTests(unittest.TestCase):
                 self._receive_until(terminal, "room_message")
 
                 assert client.portal is not None
-                client.portal.call(self.game._assign_roles, "Browser", "Terminal")
+                client.portal.call(
+                    self.game._assign_roles,
+                    {"P1": "Browser", "P2": "Terminal"},
+                )
                 browser_view = self._receive_until(browser, "role_view")
                 terminal_view = self._receive_until(terminal, "role_view")
-                self.assertEqual(browser_view["role"], "A")
+                self.assertEqual(browser_view["role"], "P1")
                 self.assertEqual(browser_view["draft"], "")
-                self.assertEqual(terminal_view["role"], "B")
+                self.assertEqual(terminal_view["role"], "P2")
                 self._receive_until(browser, "room_message")
                 self._receive_until(terminal, "room_message")
 
@@ -132,14 +147,57 @@ class WebTransportTests(unittest.TestCase):
 
                 browser_round = self._receive_until(browser, "role_round")
                 terminal_round = self._receive_until(terminal, "role_round")
-                self.assertEqual(browser_round["role"], "A")
-                self.assertEqual(terminal_round["role"], "B")
+                self.assertEqual(browser_round["role"], "P1")
+                self.assertEqual(terminal_round["role"], "P2")
                 self.assertEqual(
                     [entry["kind"] for entry in browser_round["entries"]],
                     ["action", "narration", "statusbar"],
                 )
                 self._receive_until(browser, "round_complete")
                 self._receive_until(terminal, "round_complete")
+
+    def test_three_public_clients_complete_a_round(self) -> None:
+        roles = RoleConfig.from_data({
+            "count": 3, "names": ["角色1", "角色2", "角色3"]
+        })
+        database = Database(
+            str(Path(self.tempdir.name) / "three-role.db"), roles.role_ids
+        )
+        asyncio.run(database.initialize())
+        game = GameServer(
+            database,
+            DynamicUpdater(),
+            FakeViews(),
+            FakeNarrator(),
+            scenario_name="three",
+            role_config=roles,
+        )
+        app = create_web_app(game, Path(self.tempdir.name) / "static")
+        with TestClient(app) as client:
+            with (
+                client.websocket_connect("/ws") as first,
+                client.websocket_connect("/ws") as second,
+                client.websocket_connect("/ws") as third,
+            ):
+                sockets = (first, second, third)
+                names = ("Alice", "Bob", "Carol")
+                for socket, name in zip(sockets, names, strict=True):
+                    socket.send_json({"type": "join", "name": name, "room_key": "test-key"})
+                    joined = self._receive_until(socket, "joined")
+                    self.assertEqual([role["id"] for role in joined["roles"]], ["P1", "P2", "P3"])
+                assert client.portal is not None
+                client.portal.call(
+                    game._assign_roles,
+                    {"P1": "Alice", "P2": "Bob", "P3": "Carol"},
+                )
+                for role, socket in zip(roles.role_ids, sockets, strict=True):
+                    self.assertEqual(self._receive_until(socket, "role_view")["role"], role)
+                for role, socket in zip(roles.role_ids, sockets, strict=True):
+                    socket.send_json({"type": "action", "text": f"action {role}"})
+                    socket.send_json({"type": "submit"})
+                for role, socket in zip(roles.role_ids, sockets, strict=True):
+                    self.assertEqual(self._receive_until(socket, "role_round")["role"], role)
+                    self._receive_until(socket, "round_complete")
 
     @staticmethod
     def _receive_until(websocket, message_type: str) -> dict:
@@ -159,6 +217,9 @@ class ExplicitHandlerTests(unittest.IsolatedAsyncioTestCase):
             await game.host_handler(host)
             self.assertEqual(host.messages[0]["type"], "host_joined")
             self.assertEqual(host.messages[0]["protocol_version"], PROTOCOL_VERSION)
+            self.assertEqual(
+                [role["id"] for role in host.messages[0]["roles"]], ["P1", "P2"]
+            )
 
             public = SequenceConnection({"type": "join_host"})
             await game.public_handler(public)
@@ -173,13 +234,13 @@ class ExplicitHandlerTests(unittest.IsolatedAsyncioTestCase):
             connection = SequenceConnection({"type": "join", "name": "Alice"})
             await game.sessions.join("Alice", connection)
             await game.sessions.join("Bob", SequenceConnection({"type": "join", "name": "Bob"}))
-            await game.sessions.assign_roles("Alice", "Bob")
+            await game.sessions.assign_roles({"P1": "Alice", "P2": "Bob"})
 
             await game._handle_command("Alice", connection, json.dumps({
                 "type": "action", "text": "x" * (MAX_ACTION_LENGTH + 1),
             }))
             self.assertEqual(connection.messages[-1]["type"], "error")
-            self.assertEqual(game.rounds.players["A"].action, "")
+            self.assertEqual(game.rounds.players["P1"].action, "")
 
 
 if __name__ == "__main__":

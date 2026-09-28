@@ -1,9 +1,10 @@
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_NICKNAME_LENGTH = 32;
 export const MAX_ROOM_CHAT_LENGTH = 4000;
 export const MAX_ACTION_LENGTH = 20000;
 
-export type Role = "A" | "B";
+export type Role = string;
+export type RoleDefinition = { id: Role; name: string };
 export type PlayerStatus = "LOBBY" | "EDITING" | "READY" | "PAUSED" | "PROCESSING";
 export type ProcessingStage =
   | "WAITING_INPUT"
@@ -36,6 +37,7 @@ export type JoinedMessage = {
   view_role: Role | null;
   scenario: string;
   resume_token: string;
+  roles: RoleDefinition[];
 };
 export type ResumedMessage = {
   type: "resumed";
@@ -45,6 +47,7 @@ export type ResumedMessage = {
   view_role: Role | null;
   scenario: string;
   resume_token: string;
+  roles: RoleDefinition[];
 };
 export type PresenceMessage = { type: "presence"; users: Array<{ name: string; role: Role | null; connected?: boolean }> };
 export type IdentityChangedMessage = { type: "identity_changed"; role: Role | null; view_role: Role | null; reset: boolean };
@@ -53,6 +56,7 @@ export type RoleViewMessage = {
   type: "role_view";
   role: Role;
   character_name: string;
+  opening: string;
   history: StoryEntry[];
   statusbar: unknown;
   reset: boolean;

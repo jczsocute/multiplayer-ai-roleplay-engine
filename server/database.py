@@ -10,7 +10,7 @@ from server.models import CompletedRound, PlayerStatus, RoundStage
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS players (
-    player_id TEXT PRIMARY KEY CHECK (player_id IN ('A', 'B')),
+    player_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     current_action TEXT NOT NULL DEFAULT '',
     last_ack_round INTEGER NOT NULL DEFAULT 0,
@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS rounds (
     round_number INTEGER PRIMARY KEY,
     status TEXT NOT NULL,
     stage TEXT NOT NULL DEFAULT 'WAITING_INPUT',
-    action_a TEXT,
-    action_b TEXT,
     result_world_state TEXT,
     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
@@ -32,7 +30,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     round_number INTEGER NOT NULL,
-    player_id TEXT CHECK (player_id IN ('A', 'B') OR player_id IS NULL),
+    player_id TEXT,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -47,7 +45,7 @@ CREATE TABLE IF NOT EXISTS world_state (
 
 CREATE TABLE IF NOT EXISTS player_views (
     round_id INTEGER NOT NULL,
-    player_id TEXT NOT NULL CHECK (player_id IN ('A', 'B')),
+    player_id TEXT NOT NULL,
     view_content TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (round_id, player_id),
@@ -56,7 +54,7 @@ CREATE TABLE IF NOT EXISTS player_views (
 
 CREATE TABLE IF NOT EXISTS player_statusbars (
     round_id INTEGER NOT NULL,
-    player_id TEXT NOT NULL CHECK (player_id IN ('A', 'B')),
+    player_id TEXT NOT NULL,
     content TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (round_id, player_id),
@@ -70,14 +68,27 @@ CREATE TABLE IF NOT EXISTS public_world_info (
     FOREIGN KEY (round_id) REFERENCES rounds(round_number)
 );
 
+CREATE TABLE IF NOT EXISTS round_actions (
+    round_id INTEGER NOT NULL,
+    player_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (round_id, player_id),
+    FOREIGN KEY (round_id) REFERENCES rounds(round_number)
+);
+
 """
 
 
 class Database:
     """Small SQLite wrapper; blocking work is moved off the asyncio event loop."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(
+        self, path: str, role_ids: tuple[str, ...] = ("P1", "P2")
+    ) -> None:
+        if not role_ids or len(set(role_ids)) != len(role_ids):
+            raise ValueError("role ids must be non-empty and unique")
         self.path = Path(path)
+        self.role_ids = tuple(role_ids)
 
     async def initialize(self, initial_world_state=None, initial_statusbars=None) -> None:
         await asyncio.to_thread(self._initialize_sync, initial_world_state, initial_statusbars)
@@ -160,18 +171,25 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(SCHEMA)
-            self._migrate_schema(connection)
+            self._validate_schema(connection)
             connection.executemany(
                 "INSERT OR IGNORE INTO players (player_id, status) VALUES (?, ?)",
-                (("A", PlayerStatus.EDITING.value), ("B", PlayerStatus.EDITING.value)),
+                ((role_id, PlayerStatus.EDITING.value) for role_id in self.role_ids),
             )
+            stored_roles = {
+                row[0] for row in connection.execute("SELECT player_id FROM players")
+            }
+            if stored_roles != set(self.role_ids):
+                raise RuntimeError(
+                    "database roles do not match roles.json; recreate this game instance"
+                )
             if initial_statusbars:
                 connection.executemany(
                     """UPDATE players SET statusbar_content = ?
                        WHERE player_id = ? AND statusbar_content = '{}'""",
                     (
                         (self._as_text(initial_statusbars[player_id]), player_id)
-                        for player_id in ("A", "B")
+                        for player_id in self.role_ids
                     ),
                 )
             connection.execute(
@@ -187,38 +205,7 @@ class Database:
             )
 
     @staticmethod
-    def _migrate_schema(connection: sqlite3.Connection) -> None:
-        world_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(world_state)")
-        }
-        if "state_json" in world_columns and "content" not in world_columns:
-            connection.execute("ALTER TABLE world_state RENAME COLUMN state_json TO content")
-
-        round_columns = {row[1] for row in connection.execute("PRAGMA table_info(rounds)")}
-        if "result_world_state" not in round_columns:
-            connection.execute("ALTER TABLE rounds ADD COLUMN result_world_state TEXT")
-        if "stage" not in round_columns:
-            connection.execute(
-                "ALTER TABLE rounds ADD COLUMN stage TEXT NOT NULL DEFAULT 'WAITING_INPUT'"
-            )
-        connection.execute(
-            "UPDATE rounds SET stage = 'FINISHED' WHERE status = 'COMPLETED'"
-        )
-        connection.execute(
-            """UPDATE rounds SET stage = 'WORLD_DONE'
-               WHERE status = 'OPEN' AND result_world_state IS NOT NULL
-                 AND stage = 'WAITING_INPUT'"""
-        )
-        player_columns = {row[1] for row in connection.execute("PRAGMA table_info(players)")}
-        if "last_ack_round" not in player_columns:
-            connection.execute(
-                "ALTER TABLE players ADD COLUMN last_ack_round INTEGER NOT NULL DEFAULT 0"
-            )
-        if "statusbar_content" not in player_columns:
-            connection.execute(
-                "ALTER TABLE players ADD COLUMN statusbar_content TEXT NOT NULL DEFAULT '{}'"
-            )
-        # Real-world users and role bindings are runtime-only from this version on.
+    def _validate_schema(connection: sqlite3.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS participants")
 
     def _save_player_sync(self, player_id: str, status: str, action: str) -> None:
@@ -416,7 +403,7 @@ class Database:
     def _get_recovery_data_sync(self, round_id: int) -> dict:
         with self._connect() as connection:
             row = connection.execute(
-                """SELECT stage, action_a, action_b, result_world_state
+                """SELECT stage, result_world_state
                    FROM rounds WHERE round_number = ?""",
                 (round_id,),
             ).fetchone()
@@ -449,14 +436,20 @@ class Database:
                     "SELECT player_id, status, current_action, last_ack_round FROM players"
                 ).fetchall()
             }
+            saved_actions = dict(connection.execute(
+                "SELECT player_id, content FROM round_actions WHERE round_id = ?",
+                (round_id,),
+            ).fetchall())
         return {
             "stage": RoundStage(row[0]),
             "actions": {
-                "A": row[1] or players.get("A", {}).get("action", ""),
-                "B": row[2] or players.get("B", {}).get("action", ""),
+                role_id: saved_actions.get(
+                    role_id, players.get(role_id, {}).get("action", "")
+                )
+                for role_id in self.role_ids
             },
             "players": players,
-            "world_state": row[3],
+            "world_state": row[1],
             "public_world_info": public_row[0] if public_row else None,
             "player_views": views,
             "narrations": narrations,
@@ -488,13 +481,21 @@ class Database:
             )
             connection.execute(
                 """UPDATE rounds
-                   SET action_a = ?, action_b = ?, result_world_state = ?
+                   SET result_world_state = ?
                    WHERE round_number = ?""",
                 (
-                    completed.actions["A"],
-                    completed.actions["B"],
                     self._as_text(result["world_state"]),
                     completed.round_number,
+                ),
+            )
+            connection.executemany(
+                """INSERT INTO round_actions (round_id, player_id, content)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(round_id, player_id) DO UPDATE SET
+                       content = excluded.content""",
+                (
+                    (completed.round_number, role_id, completed.actions[role_id])
+                    for role_id in self.role_ids
                 ),
             )
             connection.execute(
@@ -516,14 +517,14 @@ class Database:
                         player_id,
                         self._as_text(result["player_views"][player_id]),
                     )
-                    for player_id in ("A", "B")
+                    for player_id in self.role_ids
                 ),
             )
             connection.executemany(
                 "UPDATE players SET statusbar_content = ? WHERE player_id = ?",
                 (
                     (self._as_text(result["player_statusbar"][player_id]), player_id)
-                    for player_id in ("A", "B")
+                    for player_id in self.role_ids
                 ),
             )
             connection.executemany(
@@ -538,7 +539,7 @@ class Database:
                         player_id,
                         self._as_text(result["player_statusbar"][player_id]),
                     )
-                    for player_id in ("A", "B")
+                    for player_id in self.role_ids
                 ),
             )
             connection.execute(
@@ -603,8 +604,8 @@ class Database:
                 """INSERT INTO chat_messages
                    (round_number, player_id, role, content) VALUES (?, ?, 'player', ?)""",
                 (
-                    (completed.round_number, "A", completed.actions["A"]),
-                    (completed.round_number, "B", completed.actions["B"]),
+                    (completed.round_number, role_id, completed.actions[role_id])
+                    for role_id in self.role_ids
                 ),
             )
 

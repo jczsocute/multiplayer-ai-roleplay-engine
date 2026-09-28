@@ -11,8 +11,8 @@ from server.models import CompletedRound, RoundStage
 WORLD_RESULT = {
     "world_state": {"gate": "open"},
     "public_information": {"time": "noon"},
-    "player_views": {"A": {"gate": "visible"}, "B": {"road": "visible"}},
-    "player_statusbar": {"A": {"hp": 100}, "B": {"hp": 100}},
+    "player_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
+    "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 100}},
 }
 
 
@@ -55,7 +55,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         directory = tempfile.TemporaryDirectory()
         database = Database(str(Path(directory.name) / "game.db"))
         await database.initialize()
-        completed = CompletedRound(1, {"A": "open", "B": "watch"})
+        completed = CompletedRound(1, {"P1": "open", "P2": "watch"})
         await database.save_world_update(completed, WORLD_RESULT)
         updater = MockWorldUpdater()
         views = MockPlayerViews()
@@ -71,7 +71,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(updater.calls, [])
         self.assertEqual(views.calls, [])
-        self.assertEqual(set(narrator.calls), {"A", "B"})
+        self.assertEqual(set(narrator.calls), {"P1", "P2"})
         self.assertEqual(game.rounds.round_number, 2)
         with sqlite3.connect(database.path) as connection:
             self.assertEqual(
@@ -79,25 +79,25 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
                 RoundStage.FINISHED.value,
             )
 
-    async def test_view_generating_only_fills_missing_b_view(self) -> None:
+    async def test_view_generating_only_fills_missing_p2_view(self) -> None:
         directory, database, _, updater, views, _, game = await self.make_game()
         self.addCleanup(directory.cleanup)
         with sqlite3.connect(database.path) as connection:
-            connection.execute("DELETE FROM player_views WHERE round_id = 1 AND player_id = 'B'")
+            connection.execute("DELETE FROM player_views WHERE round_id = 1 AND player_id = 'P2'")
         await database.set_round_stage(1, RoundStage.VIEW_GENERATING)
 
         await game.recover_round()
 
         self.assertEqual(updater.calls, [])
-        self.assertEqual([call[0] for call in views.calls], ["B"])
+        self.assertEqual([call[0] for call in views.calls], ["P2"])
         self.assertEqual(game.rounds.round_number, 2)
 
-    async def test_narration_generating_only_fills_missing_b_narration(self) -> None:
+    async def test_narration_generating_only_fills_missing_p2_narration(self) -> None:
         directory, database, completed, updater, views, narrator, game = await self.make_game()
         self.addCleanup(directory.cleanup)
         await database.save_narrations(
             completed.round_number,
-            {"A": {"text": "Existing narration A", "status": {}}},
+            {"P1": {"text": "Existing narration A", "status": {}}},
         )
         await database.set_round_stage(1, RoundStage.NARRATION_GENERATING)
 
@@ -105,7 +105,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(updater.calls, [])
         self.assertEqual(views.calls, [])
-        self.assertEqual(narrator.calls, ["B"])
+        self.assertEqual(narrator.calls, ["P2"])
         self.assertEqual(game.rounds.round_number, 2)
         with sqlite3.connect(database.path) as connection:
             self.assertEqual(

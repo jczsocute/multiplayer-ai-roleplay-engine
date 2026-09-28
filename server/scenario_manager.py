@@ -1,6 +1,10 @@
+import copy
+import json
 import re
 import shutil
 from pathlib import Path
+
+from server.roles import RoleConfig, validate_role_count, validate_role_limits
 
 
 class ScenarioManager:
@@ -10,9 +14,14 @@ class ScenarioManager:
         self,
         templates_dir: str | Path = "templates",
         games_dir: str | Path = "games",
+        min_role_count: int = 2,
+        max_role_count: int = 4,
     ) -> None:
+        validate_role_limits(min_role_count, max_role_count)
         self.templates_dir = Path(templates_dir)
         self.games_dir = Path(games_dir)
+        self.min_role_count = min_role_count
+        self.max_role_count = max_role_count
 
     def list_scenarios(self) -> list[str]:
         if not self.templates_dir.exists():
@@ -27,8 +36,9 @@ class ScenarioManager:
         """Compatibility name for callers that need playable scenarios."""
         return self.list_scenarios()
 
-    def create_scenario(self, scenario_name: str) -> Path:
+    def create_scenario(self, scenario_name: str, role_count: int) -> Path:
         self._validate_name(scenario_name)
+        validate_role_count(role_count, self.min_role_count, self.max_role_count)
         if scenario_name == self.BASE_TEMPLATE:
             raise ValueError("default is the protected base template")
         source = self.templates_dir / self.BASE_TEMPLATE
@@ -38,6 +48,7 @@ class ScenarioManager:
         if target.exists():
             raise ValueError(f"scenario already exists: {scenario_name}")
         shutil.copytree(source, target)
+        self._scaffold_roles(target, role_count)
         return target
 
     def delete_scenario(self, scenario_name: str) -> None:
@@ -63,11 +74,87 @@ class ScenarioManager:
         target = self.games_dir / game_name
         if not source.is_dir():
             raise ValueError(f"unknown template: {template_name}")
+        RoleConfig.load(
+            source / "roles.json",
+            min_count=self.min_role_count,
+            max_count=self.max_role_count,
+        )
         self.games_dir.mkdir(parents=True, exist_ok=True)
         if target.exists():
             return target
         shutil.copytree(source, target)
         return target
+
+    @staticmethod
+    def _scaffold_roles(target: Path, role_count: int) -> None:
+        character_dir = target / "characters"
+        opening_dir = character_dir / "opening"
+        statusbar_dir = character_dir / "statusbar"
+        character_templates = sorted(character_dir.glob("player_*.md"))
+        statusbar_templates = sorted(statusbar_dir.glob("player_*.json"))
+        character_texts = [path.read_text(encoding="utf-8") for path in character_templates]
+        statusbar_values = [
+            json.loads(path.read_text(encoding="utf-8")) for path in statusbar_templates
+        ]
+        if not character_texts or not statusbar_values:
+            raise ValueError("base template is missing generic role files")
+        opening_dir.mkdir(parents=True, exist_ok=True)
+        opening_templates = sorted(opening_dir.glob("player_*.md"))
+        for path in character_templates + opening_templates + statusbar_templates:
+            path.unlink()
+
+        names = [f"角色{index}" for index in range(1, role_count + 1)]
+        (target / "roles.json").write_text(
+            json.dumps({"count": role_count, "names": names}, ensure_ascii=False, indent=2)
+            + "\n",
+            encoding="utf-8",
+        )
+        for index in range(1, role_count + 1):
+            character = character_texts[min(index - 1, len(character_texts) - 1)]
+            character = re.sub(
+                r"(?m)^# .+$", f"# 角色 P{index}", character, count=1
+            )
+            character = re.sub(
+                r"(?m)^姓名[：:].+$", f"姓名：{names[index - 1]}", character, count=1
+            )
+            character_dir.joinpath(f"player_{index}.md").write_text(
+                character, encoding="utf-8"
+            )
+            opening_dir.joinpath(f"player_{index}.md").write_text(
+                f"这是角色{index}的开场白。请在这里描述角色当前看到、听到、知道的情况，"
+                "以及第一轮行动所需的必要背景。\n",
+                encoding="utf-8",
+            )
+            statusbar = statusbar_values[min(index - 1, len(statusbar_values) - 1)]
+            statusbar_dir.joinpath(f"player_{index}.json").write_text(
+                json.dumps(statusbar, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+        state_path = target / "world" / "initial_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        existing = list((state.get("characters") or {}).values())
+        base = existing or [{"name": "", "relationships": {}}]
+        characters = {}
+        for index, name in enumerate(names, 1):
+            value = copy.deepcopy(base[min(index - 1, len(base) - 1)])
+            value["name"] = name
+            value["relationships"] = {}
+            characters[f"P{index}"] = value
+        state["characters"] = characters
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+        schema_path = target / "schemas" / "world_updater_output.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema["player_views"] = {f"P{index}": {} for index in range(1, role_count + 1)}
+        schema["player_statusbar"] = {
+            f"P{index}": {} for index in range(1, role_count + 1)
+        }
+        schema_path.write_text(
+            json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     def delete_game(self, game_name: str) -> None:
         self._validate_name(game_name)

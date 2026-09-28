@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import json
+import shutil
 from pathlib import Path
 
 from client.protocol import parse_input
@@ -50,15 +51,14 @@ class ScenarioManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             template = root / "templates" / "default"
-            template.mkdir(parents=True)
-            (template / "world.md").write_text("test world", encoding="utf-8")
+            shutil.copytree(Path("templates/default"), template)
             manager = ScenarioManager(root / "templates", root / "games")
-            manager.create_scenario("test_story")
+            manager.create_scenario("test_story", 2)
 
             game = manager.create_game("test_story", "test_game")
 
             self.assertTrue(game.is_dir())
-            self.assertEqual((game / "world.md").read_text(encoding="utf-8"), "test world")
+            self.assertTrue((game / "roles.json").is_file())
             self.assertEqual(manager.list_scenarios(), ["test_story"])
             self.assertEqual(manager.list_games(), ["test_game"])
             manager.delete_game("test_game")
@@ -68,12 +68,12 @@ class ScenarioManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             template = root / "templates" / "default"
-            template.mkdir(parents=True)
+            shutil.copytree(Path("templates/default"), template)
             (template / "marker.txt").write_text("base", encoding="utf-8")
             manager = ScenarioManager(root / "templates", root / "games")
 
             self.assertEqual(manager.list_scenarios(), [])
-            created = manager.create_scenario("lighthouse")
+            created = manager.create_scenario("lighthouse", 2)
             self.assertEqual((created / "marker.txt").read_text(encoding="utf-8"), "base")
             self.assertEqual(manager.list_scenarios(), ["lighthouse"])
 
@@ -84,7 +84,7 @@ class ScenarioManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not a playable"):
                 manager.create_game("default", "should_not_exist")
             with self.assertRaises(ValueError):
-                manager.create_scenario("../escape")
+                manager.create_scenario("../escape", 2)
 
 
 class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
@@ -100,11 +100,11 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(second.role)
         self.assertIsNone(third.role)
 
-        assignments = await sessions.assign_roles("Alice", "Chengzhe")
+        assignments = await sessions.assign_roles({"P1": "Alice", "P2": "Chengzhe"})
 
         self.assertEqual(
             assignments,
-            {"Chengzhe": "B", "Alice": "A", "Third": None},
+            {"Chengzhe": "P2", "Alice": "P1", "Third": None},
         )
         self.assertTrue(sessions.roles_assigned)
 
@@ -112,8 +112,8 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         sessions = Sessions()
         connection_a = FakeConnection()
         connection_b = FakeConnection()
-        await sessions.add("A", connection_a)
-        await sessions.add("B", connection_b)
+        await sessions.add("P1", connection_a)
+        await sessions.add("P2", connection_b)
         rounds = RoundManager()
         rounds.enter_lobby()
         self.assertTrue(
@@ -122,27 +122,27 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
 
         rounds.activate_lobby()
         await sessions.broadcast(rounds.snapshot())
-        rounds.set_action("A", "行动")
-        rounds.submit("A")
+        rounds.set_action("P1", "行动")
+        rounds.submit("P1")
         await sessions.broadcast(rounds.snapshot())
-        rounds.cancel_submit("A")
-        rounds.pause("A")
+        rounds.cancel_submit("P1")
+        rounds.pause("P1")
         await sessions.broadcast(rounds.snapshot())
-        rounds.resume("A")
-        rounds.submit("A")
-        rounds.set_action("B", "配合行动")
-        rounds.submit("B")
+        rounds.resume("P1")
+        rounds.submit("P1")
+        rounds.set_action("P2", "配合行动")
+        rounds.submit("P2")
         await sessions.broadcast(rounds.snapshot())
 
         for connection in (connection_a, connection_b):
-            self.assertEqual(connection.messages[0]["players"]["A"]["status"], "EDITING")
-            self.assertEqual(connection.messages[1]["players"]["A"]["status"], "READY")
-            self.assertEqual(connection.messages[2]["players"]["A"]["status"], "PAUSED")
+            self.assertEqual(connection.messages[0]["players"]["P1"]["status"], "EDITING")
+            self.assertEqual(connection.messages[1]["players"]["P1"]["status"], "READY")
+            self.assertEqual(connection.messages[2]["players"]["P1"]["status"], "PAUSED")
             self.assertEqual(
-                connection.messages[3]["players"]["A"]["status"], "PROCESSING"
+                connection.messages[3]["players"]["P1"]["status"], "PROCESSING"
             )
             self.assertEqual(
-                connection.messages[3]["players"]["B"]["status"], "PROCESSING"
+                connection.messages[3]["players"]["P2"]["status"], "PROCESSING"
             )
 
     async def test_disconnect_releases_nickname_and_role(self) -> None:
@@ -150,12 +150,12 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         original = FakeConnection()
         await sessions.join("Chengzhe", original)
         await sessions.join("Alice", FakeConnection())
-        await sessions.assign_roles("Chengzhe", "Alice")
+        await sessions.assign_roles({"P1": "Chengzhe", "P2": "Alice"})
 
         removed = await sessions.remove("Chengzhe", original)
         rejoined = await sessions.join("Chengzhe", FakeConnection())
 
-        self.assertEqual(removed.role, "A")
+        self.assertEqual(removed.role, "P1")
         self.assertIsNone(rejoined.role)
         self.assertIsNone(rejoined.view_role)
         self.assertFalse(sessions.roles_assigned)
@@ -173,13 +173,12 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
                 host,
                 json.dumps({
                     "type": "assign_roles",
-                    "player_a": "Alice",
-                    "player_b": "Chengzhe",
+                    "assignments": {"P1": "Alice", "P2": "Chengzhe"},
                 }),
             )
 
-            self.assertEqual(await server.sessions.role_for("Alice"), "A")
-            self.assertEqual(await server.sessions.role_for("Chengzhe"), "B")
+            self.assertEqual(await server.sessions.role_for("Alice"), "P1")
+            self.assertEqual(await server.sessions.role_for("Chengzhe"), "P2")
             self.assertTrue(all(
                 player.status == PlayerStatus.EDITING
                 for player in server.rounds.players.values()
@@ -192,11 +191,11 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             result = {
                 "world_state": {"gate": "open"},
                 "public_information": {"time": "noon"},
-                "player_views": {"A": {"seen": 1}, "B": {"seen": 2}},
-                "player_statusbar": {"A": {"hp": 90}, "B": {"hp": 80}},
+                "player_views": {"P1": {"seen": 1}, "P2": {"seen": 2}},
+                "player_statusbar": {"P1": {"hp": 90}, "P2": {"hp": 80}},
             }
             await database.save_world_update(
-                CompletedRound(1, {"A": "open", "B": "watch"}), result
+                CompletedRound(1, {"P1": "open", "P2": "watch"}), result
             )
             server = GameServer(database, None, None, None)
             host = HostJoinThenDisconnectConnection("Host")
@@ -211,16 +210,16 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize(
-                {}, {"A": {"secret_a": 1}, "B": {"secret_b": 2}}
+                {}, {"P1": {"secret_a": 1}, "P2": {"secret_b": 2}}
             )
             server = GameServer(database, None, None, None)
             connection_a = FakeConnection()
             connection_b = FakeConnection()
-            await server.sessions.add("A", connection_a)
-            await server.sessions.add("B", connection_b)
+            await server.sessions.add("P1", connection_a)
+            await server.sessions.add("P2", connection_b)
 
-            await server._send_status("A", connection_a)
-            await server._send_status("B", connection_b)
+            await server._send_status("P1", connection_a)
+            await server._send_status("P2", connection_b)
 
             self.assertEqual(connection_a.messages[-1]["statusbar"], {"secret_a": 1})
             self.assertEqual(connection_b.messages[-1]["statusbar"], {"secret_b": 2})
@@ -237,24 +236,24 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             connection_b = FakeConnection()
             await server.sessions.join("Chengzhe", connection_a)
             await server.sessions.join("Alice", connection_b)
-            await server.sessions.assign_roles("Chengzhe", "Alice")
-            server.rounds.set_action("A", "检查桌上的信")
-            server.rounds.submit("A")
+            await server.sessions.assign_roles({"P1": "Chengzhe", "P2": "Alice"})
+            server.rounds.set_action("P1", "检查桌上的信")
+            server.rounds.submit("P1")
 
             removed = await server.sessions.remove("Chengzhe", connection_a)
             disconnected = await server._round_snapshot()
             await server.sessions.broadcast(disconnected)
 
-            self.assertEqual(disconnected["players"]["A"]["status"], "READY")
-            self.assertFalse(disconnected["players"]["A"]["connected"])
-            self.assertFalse(connection_b.messages[-1]["players"]["A"]["connected"])
+            self.assertEqual(disconnected["players"]["P1"]["status"], "READY")
+            self.assertFalse(disconnected["players"]["P1"]["connected"])
+            self.assertFalse(connection_b.messages[-1]["players"]["P1"]["connected"])
 
             rejoined = await server.sessions.join("Chengzhe", FakeConnection())
             reconnected = await server._round_snapshot()
-            self.assertEqual(removed.role, "A")
+            self.assertEqual(removed.role, "P1")
             self.assertIsNone(rejoined.role)
-            self.assertEqual(reconnected["players"]["A"]["status"], "READY")
-            self.assertFalse(reconnected["players"]["A"]["connected"])
+            self.assertEqual(reconnected["players"]["P1"]["status"], "READY")
+            self.assertFalse(reconnected["players"]["P1"]["connected"])
 
     async def test_latest_draft_is_persisted_and_returned_by_status(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -262,20 +261,20 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             await database.initialize()
             server = GameServer(database, None, None, None)
             connection = FakeConnection()
-            await server.sessions.add("A", connection)
+            await server.sessions.add("P1", connection)
 
             await server._handle_command(
-                "A", connection, json.dumps({"type": "action", "text": "旧 Draft"})
+                "P1", connection, json.dumps({"type": "action", "text": "旧 Draft"})
             )
             await server._handle_command(
-                "A", connection, json.dumps({"type": "action", "text": "最新完整 Draft"})
+                "P1", connection, json.dumps({"type": "action", "text": "最新完整 Draft"})
             )
-            await server._send_status("A", connection)
+            await server._send_status("P1", connection)
 
-            self.assertEqual(server.rounds.players["A"].action, "最新完整 Draft")
+            self.assertEqual(server.rounds.players["P1"].action, "最新完整 Draft")
             self.assertEqual(connection.messages[-1]["draft"], "最新完整 Draft")
             recovery = await database.get_recovery_data(1)
-            self.assertEqual(recovery["players"]["A"]["action"], "最新完整 Draft")
+            self.assertEqual(recovery["players"]["P1"]["action"], "最新完整 Draft")
 
     async def test_handler_broadcasts_join_but_not_leave_during_grace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -301,17 +300,17 @@ class CliRoundFlowTests(unittest.TestCase):
         rounds = RoundManager()
 
         self.assertEqual(parse_input("/pause"), {"type": "pause"})
-        rounds.pause("A")
-        self.assertEqual(rounds.players["A"].status, PlayerStatus.PAUSED)
-        rounds.resume("A")
-        rounds.set_action("A", "打开舱门")
-        rounds.submit("A")
-        self.assertEqual(rounds.players["A"].status, PlayerStatus.READY)
-        rounds.cancel_submit("A")
-        self.assertEqual(rounds.players["A"].status, PlayerStatus.EDITING)
-        rounds.submit("A")
-        rounds.set_action("B", "检查仪表")
-        completed = rounds.submit("B")
+        rounds.pause("P1")
+        self.assertEqual(rounds.players["P1"].status, PlayerStatus.PAUSED)
+        rounds.resume("P1")
+        rounds.set_action("P1", "打开舱门")
+        rounds.submit("P1")
+        self.assertEqual(rounds.players["P1"].status, PlayerStatus.READY)
+        rounds.cancel_submit("P1")
+        self.assertEqual(rounds.players["P1"].status, PlayerStatus.EDITING)
+        rounds.submit("P1")
+        rounds.set_action("P2", "检查仪表")
+        completed = rounds.submit("P2")
         self.assertIsNotNone(completed)
         self.assertTrue(rounds.is_processing())
 

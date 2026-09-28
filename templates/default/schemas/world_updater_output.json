@@ -2,11 +2,11 @@
   "world_state": {},
   "public_information": {},
   "player_views": {
-    "A": {},
-    "B": {}
+    "P1": {},
+    "P2": {}
   },
   "player_statusbar": {
-    "A": {},
-    "B": {}
+    "P1": {},
+    "P2": {}
   }
 }

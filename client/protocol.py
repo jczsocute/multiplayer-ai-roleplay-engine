@@ -10,7 +10,7 @@ COMMANDS = {
 def parse_input(text: str) -> dict:
     command = text.strip()
     parts = command.split()
-    if len(parts) == 2 and parts[0] == "/view" and parts[1].upper() in ("A", "B"):
+    if len(parts) == 2 and parts[0] == "/view" and parts[1].upper().startswith("P"):
         return {"type": "view", "role": parts[1].upper()}
     if command in COMMANDS:
         return COMMANDS[command]

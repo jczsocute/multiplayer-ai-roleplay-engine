@@ -1,11 +1,14 @@
-import type { PlayerState, Role } from "../protocol";
+import type { PlayerState, Role, RoleDefinition } from "../protocol";
 
 const labels: Record<string, string> = { LOBBY: "等待", EDITING: "编辑中", READY: "已提交", PAUSED: "已暂停", PROCESSING: "处理中" };
 
-export function PlayerStates({ players }: { players: Partial<Record<Role, PlayerState>> }) {
-  return <div className="player-states">{(["A", "B"] as Role[]).map((role) => {
+export function PlayerStates({ players, roles }: {
+  players: Partial<Record<Role, PlayerState>>;
+  roles: RoleDefinition[];
+}) {
+  return <div className="player-states">{roles.map(({ id: role, name: configuredName }) => {
     const player = players[role];
-    const name = player?.character_name || role;
+    const name = player?.character_name || configuredName || role;
     const occupied = Boolean(player?.user);
     const status = player
       ? (occupied

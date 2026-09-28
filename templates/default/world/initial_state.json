@@ -27,7 +27,7 @@
     "幕后威胁": "不存在反派或超自然力量，危险来自风暴、设备故障和时间压力"
   },
   "characters": {
-    "A": {
+    "P1": {
       "name": "林岚",
       "location": "值班室",
       "physical_state": {
@@ -39,7 +39,7 @@
         "current_emotion": "担忧医疗船安危"
       },
       "relationships": {
-        "B": "信任周砚的电气专业能力，尚未形成明确分工"
+        "P2": "信任周砚的电气专业能力，尚未形成明确分工"
       },
       "inventory": [],
       "knowledge": [
@@ -49,7 +49,7 @@
       ],
       "current_intention": "与周砚交换信息并决定恢复灯塔的路线"
     },
-    "B": {
+    "P2": {
       "name": "周砚",
       "location": "值班室",
       "physical_state": {
@@ -61,7 +61,7 @@
         "current_emotion": "对机房积水和焦痕保持戒备"
       },
       "relationships": {
-        "A": "认可林岚对灯塔结构的了解，愿意协作"
+        "P1": "认可林岚对灯塔结构的了解，愿意协作"
       },
       "inventory": [],
       "knowledge": [

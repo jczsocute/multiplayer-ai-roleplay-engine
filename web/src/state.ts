@@ -1,4 +1,4 @@
-import type { PlayerState, Role, RoomMessage, ServerMessage, StoryEntry } from "./protocol";
+import type { PlayerState, Role, RoleDefinition, RoomMessage, ServerMessage, StoryEntry } from "./protocol";
 
 export type ConnectionStatus =
   | "DISCONNECTED"
@@ -16,6 +16,7 @@ export type ClientState = {
   roomKey: string;
   roomKeyRequired: boolean;
   resumeToken: string;
+  roles: RoleDefinition[];
   role: Role | null;
   viewRole: Role | null;
   characterName: string;
@@ -24,6 +25,7 @@ export type ClientState = {
   players: Partial<Record<Role, PlayerState>>;
   round: number | null;
   processingStage: string | null;
+  opening: string;
   storyEntries: StoryEntry[];
   actionDraft: string;
   chatDraft: string;
@@ -36,8 +38,8 @@ export type ClientState = {
 
 export const initialState: ClientState = {
   connection: "DISCONNECTED", nickname: "", roomKey: "", roomKeyRequired: true, resumeToken: "",
-  role: null, viewRole: null, characterName: "", scenario: "", presence: [],
-  players: {}, round: null, processingStage: null, storyEntries: [],
+  roles: [], role: null, viewRole: null, characterName: "", scenario: "", presence: [],
+  players: {}, round: null, processingStage: null, opening: "", storyEntries: [],
   actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
   chatUnread: 0, errors: [], notices: [],
 };
@@ -81,19 +83,22 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
   switch (message.type) {
     case "joined":
       return { ...state, connection: "CONNECTED", nickname: message.name, role: message.role,
-        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token };
+        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token,
+        roles: message.roles };
     case "resumed":
       return { ...state, connection: "CONNECTED", nickname: message.name, role: message.role,
-        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token };
+        viewRole: message.view_role, scenario: message.scenario, resumeToken: message.resume_token,
+        roles: message.roles };
     case "presence":
       return { ...state, presence: message.users };
     case "identity_changed":
       return { ...state, role: message.role, viewRole: message.view_role,
+        opening: message.reset ? "" : state.opening,
         storyEntries: message.reset ? [] : state.storyEntries,
         actionDraft: message.role ? state.actionDraft : "" };
     case "role_view":
       return { ...state, viewRole: message.role, characterName: message.character_name,
-        storyEntries: message.history,
+        opening: message.opening, storyEntries: message.history,
         actionDraft: state.role === message.role && message.draft !== undefined
           ? message.draft : state.actionDraft };
     case "role_round":

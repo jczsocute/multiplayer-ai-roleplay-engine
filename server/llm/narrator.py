@@ -33,6 +33,10 @@ class Narrator:
 
 {self.loader.character(player_id)}
 
+# 当前角色
+
+{player_id}（{self.loader.character_name(player_id)}）
+
 # 公共世界信息
 
 {self._format(public_world_info)}

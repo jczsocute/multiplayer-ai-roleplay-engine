@@ -21,27 +21,30 @@ class RoleViewTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            completed = CompletedRound(1, {"A": "open", "B": "watch"})
+            completed = CompletedRound(1, {"P1": "open", "P2": "watch"})
             result = {
                 "world_state": {"gate": "open"},
                 "public_information": {"time": "noon"},
-                "player_views": {"A": {"gate": "visible"}, "B": {"road": "visible"}},
-                "player_statusbar": {"A": {"hp": 90}, "B": {"hp": 80}},
+                "player_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
+                "player_statusbar": {"P1": {"hp": 90}, "P2": {"hp": 80}},
             }
             await database.save_world_update(completed, result)
             await database.save_narrations(1, {
-                "A": {"text": "Narration A", "status": {}},
-                "B": {"text": "Narration B", "status": {}},
+                "P1": {"text": "Narration A", "status": {}},
+                "P2": {"text": "Narration B", "status": {}},
             })
             await database.finish_round(completed)
-            server = GameServer(database, None, None, None)
-            server.rounds.players["A"].action = "private current draft"
+            server = GameServer(
+                database, None, None, None,
+                openings={"P1": "P1 opening", "P2": "P2 opening"},
+            )
+            server.rounds.players["P1"].action = "private current draft"
 
             spectator = FakeWebSocket()
-            await server._send_role_view(spectator, "A")
+            await server._send_role_view(spectator, "P1")
             player = FakeWebSocket()
             await server._send_role_view(
-                player, "A", include_draft=True, include_current_view=True
+                player, "P1", include_draft=True, include_current_view=True
             )
 
             self.assertEqual(
@@ -49,9 +52,23 @@ class RoleViewTests(unittest.IsolatedAsyncioTestCase):
                 ["action", "narration", "statusbar"],
             )
             self.assertNotIn("draft", spectator.messages[0])
+            self.assertEqual(spectator.messages[0]["opening"], "P1 opening")
             self.assertNotIn("private current draft", str(spectator.messages[0]))
             self.assertEqual(player.messages[0]["draft"], "private current draft")
             self.assertEqual(player.messages[0]["current_view"], {"gate": "visible"})
+
+    async def test_role_view_contains_opening_when_history_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            server = GameServer(
+                database, None, None, None,
+                openings={"P1": "The opening", "P2": "Other opening"},
+            )
+            spectator = FakeWebSocket()
+            await server._send_role_view(spectator, "P1")
+            self.assertEqual(spectator.messages[0]["opening"], "The opening")
+            self.assertEqual(spectator.messages[0]["history"], [])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ import os
 import secrets
 from dataclasses import dataclass
 
+from server.roles import validate_role_limits
+
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
@@ -27,6 +29,8 @@ class Settings:
     room_key: str
     disconnect_grace_seconds: int
     ui_font_scale: float
+    min_role_count: int
+    max_role_count: int
 
 
 def generate_room_key() -> str:
@@ -46,6 +50,7 @@ def load_settings() -> Settings:
     room_key = os.getenv("ROOM_KEY", "").strip()
     if not room_key:
         room_key = generate_room_key()
+    min_role_count, max_role_count = load_role_limits()
     return Settings(
         web_host=os.getenv("WEB_HOST", os.getenv("SERVER_HOST", "127.0.0.1")),
         web_port=int(os.getenv("WEB_PORT", os.getenv("SERVER_PORT", "8080"))),
@@ -59,7 +64,17 @@ def load_settings() -> Settings:
         room_key=room_key,
         disconnect_grace_seconds=_positive_int_env("DISCONNECT_GRACE_SECONDS", 60),
         ui_font_scale=_float_env("UI_FONT_SCALE", 0.7, 0.4, 1.5),
+        min_role_count=min_role_count,
+        max_role_count=max_role_count,
     )
+
+
+def load_role_limits() -> tuple[int, int]:
+    load_dotenv()
+    minimum = _positive_int_env("MIN_ROLE_COUNT", 2)
+    maximum = _positive_int_env("MAX_ROLE_COUNT", 4)
+    validate_role_limits(minimum, maximum)
+    return minimum, maximum
 
 
 def _required_env(name: str) -> str:

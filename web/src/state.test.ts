@@ -8,26 +8,33 @@ describe("protocol reducer", () => {
       character_name: null, text: "hello",
     }});
     const viewed = reducer(withChat, { type: "server", message: {
-      type: "role_view", role: "A", character_name: "林岚", reset: true,
-      history: [{ kind: "action", content: "open" }], statusbar: { hp: 10 },
+      type: "role_view", role: "P1", character_name: "林岚", reset: true,
+      opening: "P1 opening", history: [{ kind: "action", content: "open" }], statusbar: { hp: 10 },
     }});
     expect(viewed.storyEntries).toHaveLength(1);
+    expect(viewed.opening).toBe("P1 opening");
     expect(viewed.roomMessages).toHaveLength(1);
+
+    const switched = reducer(viewed, { type: "server", message: {
+      type: "role_view", role: "P2", character_name: "周砚", reset: true,
+      opening: "P2 opening", history: [], statusbar: {},
+    }});
+    expect(switched.opening).toBe("P2 opening");
   });
 
   it("never adopts a spectator view as a private draft", () => {
     const spectator = reducer(initialState, { type: "server", message: {
-      type: "role_view", role: "A", character_name: "林岚", reset: true,
-      history: [], statusbar: {}, draft: "should be ignored",
+      type: "role_view", role: "P1", character_name: "林岚", reset: true,
+      opening: "opening", history: [], statusbar: {}, draft: "should be ignored",
     }});
     expect(spectator.actionDraft).toBe("");
   });
 
   it("clears player-only state when reassigned to spectator", () => {
-    const player = { ...initialState, role: "A" as const, viewRole: "A" as const, actionDraft: "secret",
+    const player = { ...initialState, role: "P1", viewRole: "P1", actionDraft: "secret",
       storyEntries: [{ kind: "action" as const, content: "old" }] };
     const spectator = reducer(player, { type: "server", message: {
-      type: "identity_changed", role: null, view_role: "A", reset: true,
+      type: "identity_changed", role: null, view_role: "P1", reset: true,
     }});
     expect(spectator.actionDraft).toBe("");
     expect(spectator.storyEntries).toEqual([]);
@@ -35,12 +42,14 @@ describe("protocol reducer", () => {
 
   it("resumed restores connection and identity", () => {
     const resumed = reducer({ ...initialState, connection: "RECONNECTING" }, { type: "server", message: {
-      type: "resumed", protocol_version: 2, name: "Alice", role: "A", view_role: "A",
+      type: "resumed", protocol_version: 3, name: "Alice", role: "P1", view_role: "P1",
       scenario: "lighthouse", resume_token: "token-2",
+      roles: [{ id: "P1", name: "林岚" }, { id: "P2", name: "周砚" }, { id: "P3", name: "苏禾" }],
     }});
     expect(resumed.connection).toBe("CONNECTED");
-    expect(resumed.role).toBe("A");
-    expect(resumed.viewRole).toBe("A");
+    expect(resumed.role).toBe("P1");
+    expect(resumed.viewRole).toBe("P1");
+    expect(resumed.roles).toHaveLength(3);
     expect(resumed.resumeToken).toBe("token-2");
   });
 
@@ -58,7 +67,7 @@ describe("protocol reducer", () => {
 
   it("room messages increment unread on story tab and reset on chat tab", () => {
     const withMessage = reducer(initialState, { type: "server", message: {
-      type: "room_message", kind: "player", sender: "Alice", role: "A",
+      type: "room_message", kind: "player", sender: "Alice", role: "P1",
       character_name: "林岚", text: "hi",
     }});
     expect(withMessage.chatUnread).toBe(1);

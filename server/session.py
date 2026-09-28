@@ -31,7 +31,16 @@ class User:
 
 
 class Sessions:
-    def __init__(self, max_users: int = 100, disconnect_grace_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        role_ids: tuple[str, ...] = ("P1", "P2"),
+        max_users: int = 100,
+        disconnect_grace_seconds: int = 60,
+    ) -> None:
+        if not role_ids or len(set(role_ids)) != len(role_ids):
+            raise ValueError("role ids must be non-empty and unique")
+        self.role_ids = tuple(role_ids)
+        self._role_set = frozenset(role_ids)
         self.max_users = max_users
         self.disconnect_grace_seconds = disconnect_grace_seconds
         self.users: dict[str, User] = {}
@@ -139,7 +148,7 @@ class Sessions:
 
     async def add(self, role: str, websocket: Connection) -> bool:
         """Compatibility helper for focused story-plane tests."""
-        if role not in ("A", "B"):
+        if role not in self._role_set:
             return False
         async with self._lock:
             if any(user.role == role for user in self.users.values()):
@@ -147,14 +156,22 @@ class Sessions:
             self.users[role] = User(role, websocket, role=role, view_role=role)
             return True
 
-    async def assign_roles(self, player_a: str, player_b: str) -> dict[str, str | None]:
+    async def assign_roles(
+        self, assignments: dict[str, str]
+    ) -> dict[str, str | None]:
         async with self._lock:
-            if player_a == player_b:
-                raise ValueError("Player A and Player B must be different users")
-            if player_a not in self.users or player_b not in self.users:
+            if set(assignments) != self._role_set:
+                raise ValueError("assignments must contain every role exactly once")
+            usernames = list(assignments.values())
+            if len(set(usernames)) != len(usernames):
+                raise ValueError("each role must be assigned to a different user")
+            if any(
+                name not in self.users or not self.users[name].connected
+                for name in usernames
+            ):
                 raise ValueError("assign roles only to currently connected users")
 
-            requested = {player_a: "A", player_b: "B"}
+            requested = {name: role for role, name in assignments.items()}
             for user in self.users.values():
                 old_role = user.role
                 new_role = requested.get(user.name)
@@ -169,7 +186,7 @@ class Sessions:
 
     @property
     def roles_assigned(self) -> bool:
-        return {user.role for user in self.users.values() if user.role} == {"A", "B"}
+        return {user.role for user in self.users.values() if user.role} == self._role_set
 
     async def role_for(self, name: str) -> str | None:
         async with self._lock:
@@ -177,6 +194,7 @@ class Sessions:
             return user.role if user else None
 
     async def user_for_role(self, role: str) -> User | None:
+        self._validate_role(role)
         async with self._lock:
             return next((user for user in self.users.values() if user.role == role), None)
 
@@ -197,8 +215,7 @@ class Sessions:
             }
 
     async def set_view(self, name: str, role: str) -> None:
-        if role not in ("A", "B"):
-            raise ValueError("view role must be A or B")
+        self._validate_role(role)
         async with self._lock:
             user = self.users.get(name)
             if user is None:
@@ -208,14 +225,18 @@ class Sessions:
             user.view_role = role
 
     async def set_host_view(self, view: str) -> None:
-        if view not in ("A", "B", "world"):
-            raise ValueError("host view must be A, B, or world")
+        if view != "world":
+            self._validate_role(view)
         async with self._lock:
             self.host_view = view
 
     async def connections_by_role(self) -> dict[str, bool]:
         assignments = await self.role_assignments()
-        return {role: role in assignments for role in ("A", "B")}
+        return {role: role in assignments for role in self.role_ids}
+
+    def _validate_role(self, role: str) -> None:
+        if role not in self._role_set:
+            raise ValueError(f"unknown role: {role}")
 
     async def presence_snapshot(self) -> dict:
         async with self._lock:
@@ -248,11 +269,13 @@ class Sessions:
             await connection.send(payload)
 
     async def send(self, role: str, message: dict) -> None:
+        self._validate_role(role)
         user = await self.user_for_role(role)
         if user is not None and user.websocket is not None:
             await user.websocket.send(json.dumps(message, ensure_ascii=False))
 
     async def send_viewers(self, role: str, message: dict) -> None:
+        self._validate_role(role)
         payload = json.dumps(message, ensure_ascii=False)
         async with self._lock:
             recipients = tuple(
@@ -278,6 +301,8 @@ class Sessions:
                 pass
 
     async def send_host_view(self, view: str, message: dict) -> None:
+        if view != "world":
+            self._validate_role(view)
         payload = json.dumps(message, ensure_ascii=False)
         async with self._lock:
             connection = self.host_connection if self.host_view == view else None

@@ -27,6 +27,10 @@ class PlayerViewGenerator:
 
 {self.loader.character(player_id)}
 
+# 当前角色
+
+{player_id}（{self.loader.character_name(player_id)}）
+
 # 世界状态
 
 {world_state if isinstance(world_state, str) else json.dumps(world_state, ensure_ascii=False)}

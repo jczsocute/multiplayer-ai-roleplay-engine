@@ -69,7 +69,7 @@ class RoomKeyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(connection.closed)
         self.assertEqual(game.sessions.users, {})
 
-    async def test_join_returns_protocol_v2_and_resume_token(self) -> None:
+    async def test_join_returns_protocol_v3_and_resume_token(self) -> None:
         game = await self.make_game()
         connection = ScriptedConnection([join_message("Alice")])
         await game.public_handler(connection)
@@ -111,17 +111,17 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
             room_key=KEY, disconnect_grace_seconds=grace,
         )
 
-    async def assign_two_players(self, game: GameServer):
+    async def assign_two_roles(self, game: GameServer):
         alice = ScriptedConnection()
         bob = ScriptedConnection()
         await game.sessions.join("Alice", alice)
         await game.sessions.join("Bob", bob)
-        await game.sessions.assign_roles("Alice", "Bob")
+        await game.sessions.assign_roles({"P1": "Alice", "P2": "Bob"})
         return alice, bob
 
     async def test_disconnect_enters_grace_and_preserves_identity(self) -> None:
         game = await self.make_game()
-        alice, _bob = await self.assign_two_players(game)
+        alice, _bob = await self.assign_two_roles(game)
         token = game.sessions.users["Alice"].resume_token
 
         disconnected = await game.sessions.mark_disconnected("Alice", alice)
@@ -129,18 +129,18 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Alice", game.sessions.users)
         self.assertFalse(game.sessions.users["Alice"].connected)
         self.assertIsNone(game.sessions.users["Alice"].websocket)
-        self.assertEqual(await game.sessions.role_for("Alice"), "A")
+        self.assertEqual(await game.sessions.role_for("Alice"), "P1")
         self.assertEqual(game.sessions.users["Alice"].resume_token, token)
 
         snapshot = await game._round_snapshot()
-        self.assertFalse(snapshot["players"]["A"]["connected"])
-        self.assertEqual(snapshot["players"]["A"]["user"], "Alice")
+        self.assertFalse(snapshot["players"]["P1"]["connected"])
+        self.assertEqual(snapshot["players"]["P1"]["user"], "Alice")
 
     async def test_resume_restores_role_draft_and_ready_status(self) -> None:
         game = await self.make_game()
-        alice, _bob = await self.assign_two_players(game)
-        game.rounds.set_action("A", "检查房门")
-        game.rounds.submit("A")
+        alice, _bob = await self.assign_two_roles(game)
+        game.rounds.set_action("P1", "检查房门")
+        game.rounds.submit("P1")
         token = game.sessions.users["Alice"].resume_token
         await game.sessions.mark_disconnected("Alice", alice)
 
@@ -148,32 +148,32 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         await game.public_handler(connection)
 
         resumed = next(m for m in connection.messages if m["type"] == "resumed")
-        self.assertEqual(resumed["role"], "A")
-        self.assertEqual(resumed["view_role"], "A")
+        self.assertEqual(resumed["role"], "P1")
+        self.assertEqual(resumed["view_role"], "P1")
         self.assertEqual(resumed["protocol_version"], PROTOCOL_VERSION)
         state = next(m for m in connection.messages if m["type"] == "state")
-        self.assertEqual(state["players"]["A"]["status"], "READY")
-        self.assertTrue(state["players"]["A"]["connected"])
+        self.assertEqual(state["players"]["P1"]["status"], "READY")
+        self.assertTrue(state["players"]["P1"]["connected"])
         role_view = next(m for m in connection.messages if m["type"] == "role_view")
         self.assertEqual(role_view["draft"], "检查房门")
 
     async def test_resume_restores_paused_status(self) -> None:
         game = await self.make_game()
-        alice, _bob = await self.assign_two_players(game)
-        game.rounds.pause("A")
+        alice, _bob = await self.assign_two_roles(game)
+        game.rounds.pause("P1")
         token = game.sessions.users["Alice"].resume_token
         await game.sessions.mark_disconnected("Alice", alice)
 
         connection = ScriptedConnection([resume_message("Alice", token)])
         await game.public_handler(connection)
         state = next(m for m in connection.messages if m["type"] == "state")
-        self.assertEqual(state["players"]["A"]["status"], PlayerStatus.PAUSED.value)
+        self.assertEqual(state["players"]["P1"]["status"], PlayerStatus.PAUSED.value)
 
     async def test_resume_restores_spectator_view(self) -> None:
         game = await self.make_game()
         tom = ScriptedConnection()
         await game.sessions.join("Tom", tom)
-        await game.sessions.set_view("Tom", "B")
+        await game.sessions.set_view("Tom", "P2")
         token = game.sessions.users["Tom"].resume_token
         await game.sessions.mark_disconnected("Tom", tom)
 
@@ -181,13 +181,13 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         await game.public_handler(connection)
         resumed = next(m for m in connection.messages if m["type"] == "resumed")
         self.assertIsNone(resumed["role"])
-        self.assertEqual(resumed["view_role"], "B")
+        self.assertEqual(resumed["view_role"], "P2")
         role_view = next(m for m in connection.messages if m["type"] == "role_view")
-        self.assertEqual(role_view["role"], "B")
+        self.assertEqual(role_view["role"], "P2")
 
     async def test_invalid_or_mismatched_token_rejected(self) -> None:
         game = await self.make_game()
-        alice, _bob = await self.assign_two_players(game)
+        alice, _bob = await self.assign_two_roles(game)
         token = game.sessions.users["Alice"].resume_token
         await game.sessions.mark_disconnected("Alice", alice)
 
@@ -204,7 +204,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_grace_expiry_releases_nickname_and_role(self) -> None:
         game = await self.make_game(grace=1)
-        alice, _bob = await self.assign_two_players(game)
+        alice, _bob = await self.assign_two_roles(game)
         token = game.sessions.users["Alice"].resume_token
         await game.sessions.mark_disconnected("Alice", alice)
 
@@ -222,7 +222,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_leave_releases_immediately_and_invalidates_token(self) -> None:
         game = await self.make_game()
-        alice, _bob = await self.assign_two_players(game)
+        alice, _bob = await self.assign_two_roles(game)
         token = game.sessions.users["Alice"].resume_token
 
         connection = ScriptedConnection([join_message("Alice"), json.dumps({"type": "leave"})])

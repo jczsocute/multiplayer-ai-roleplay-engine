@@ -7,12 +7,19 @@ class RoundError(ValueError):
 
 
 class RoundManager:
-    """Keep the small, in-memory state machine for one two-player game."""
+    """Keep the small, in-memory state machine for one synchronous game."""
 
-    def __init__(self, round_number: int = 1) -> None:
+    def __init__(
+        self, role_ids: tuple[str, ...] = ("P1", "P2"), round_number: int = 1
+    ) -> None:
+        if not role_ids:
+            raise ValueError("at least one role is required")
+        if len(set(role_ids)) != len(role_ids):
+            raise ValueError("role ids must be unique")
+        self.role_ids = tuple(role_ids)
         self.round_number = round_number
         self.stage = RoundStage.WAITING_INPUT
-        self.players = {player_id: Player(player_id) for player_id in ("A", "B")}
+        self.players = {player_id: Player(player_id) for player_id in self.role_ids}
 
     def set_action(self, player_id: str, text: str) -> None:
         player = self._player(player_id)

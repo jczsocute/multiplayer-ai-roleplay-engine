@@ -1,8 +1,11 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from server.llm.client import LLMClient
 from server.llm.prompt_loader import PromptLoader
+from server.roles import RoleConfig
 
 
 class FakeCompletions:
@@ -30,17 +33,30 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("叙事者", self.loader.text("prompts/narration.md"))
         self.assertIn("AI 创作规范", self.loader.text("prompts/ai_guidelines.md"))
         self.assertIn("世界设定", self.loader.text("world/world.md"))
-        self.assertIn("玩家 A", self.loader.character("A"))
-        self.assertEqual(self.loader.character_name("A"), "林岚")
-        self.assertEqual(self.loader.character_name("B"), "周砚")
+        self.assertIn("角色 P1", self.loader.character("P1"))
+        self.assertEqual(self.loader.character_name("P1"), "林岚")
+        self.assertEqual(self.loader.character_name("P2"), "周砚")
+        self.assertIn("暴雨", self.loader.opening("P1"))
+        self.assertIn("机房", self.loader.opening("P2"))
         roles = self.loader.json("roles.json")
         self.assertEqual(roles["count"], 2)
         self.assertEqual(len(roles["names"]), roles["count"])
-        self.assertIn("生命状态", self.loader.statusbar("A"))
-        self.assertIn("通信设备", self.loader.statusbar("B"))
+        self.assertIn("生命状态", self.loader.statusbar("P1"))
+        self.assertIn("通信设备", self.loader.statusbar("P2"))
         self.assertNotEqual(
-            set(self.loader.statusbar("A")), set(self.loader.statusbar("B"))
+            set(self.loader.statusbar("P1")), set(self.loader.statusbar("P2"))
         )
+        with self.assertRaisesRegex(ValueError, "unknown role"):
+            self.loader.character("P99")
+        with self.assertRaisesRegex(ValueError, "unknown role"):
+            self.loader.opening("P99")
+
+    def test_missing_opening_has_a_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            roles = RoleConfig.from_data({"count": 2, "names": ["甲", "乙"]})
+            loader = PromptLoader(directory, roles)
+            with self.assertRaisesRegex(ValueError, "opening file is missing for role P1"):
+                loader.opening("P1")
 
     def test_world_output_template_has_required_structure(self) -> None:
         template = self.loader.json("schemas/world_updater_output.json")
@@ -53,15 +69,15 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
                 "player_statusbar",
             },
         )
-        self.assertEqual(set(template["player_views"]), {"A", "B"})
-        self.assertEqual(set(template["player_statusbar"]), {"A", "B"})
+        self.assertEqual(set(template["player_views"]), {"P1", "P2"})
+        self.assertEqual(set(template["player_statusbar"]), {"P1", "P2"})
         legacy_name = "world_" + "update_output.json"
         self.assertFalse((self.loader.root / "schemas" / legacy_name).exists())
 
     def test_initial_state_contains_complete_character_state(self) -> None:
         state = self.loader.json("world/initial_state.json")
-        self.assertEqual(set(state["characters"]), {"A", "B"})
-        for player_id in ("A", "B"):
+        self.assertEqual(set(state["characters"]), {"P1", "P2"})
+        for player_id in ("P1", "P2"):
             character = state["characters"][player_id]
             for field in (
                 "location",

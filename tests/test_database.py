@@ -19,19 +19,19 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 connection.execute("INSERT INTO participants (name) VALUES ('legacy')")
             database = Database(str(path))
             await database.initialize()
-            completed = CompletedRound(1, {"A": "left", "B": "right"})
+            completed = CompletedRound(1, {"P1": "left", "P2": "right"})
             await database.save_world_update(
                 completed,
                 {
                     "world_state": {"gate": "open"},
                     "public_information": {"time": "morning"},
-                    "player_views": {"A": {"gate": "visible"}, "B": {"fog": True}},
-                    "player_statusbar": {"A": {"hp": 100}, "B": {"hp": 90}},
+                    "player_views": {"P1": {"gate": "visible"}, "P2": {"fog": True}},
+                    "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 90}},
                 },
             )
             narrations = {
-                    "A": {"text": "A narration", "status": {}},
-                    "B": {"text": "B narration", "status": {}},
+                    "P1": {"text": "A narration", "status": {}},
+                    "P2": {"text": "B narration", "status": {}},
                 }
             await database.save_narrations(1, narrations)
             await database.finish_round(completed)
@@ -44,9 +44,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             latest = await database.get_latest_world_update()
             self.assertEqual(latest["round"], 1)
             self.assertEqual(latest["result"]["world_state"], {"gate": "open"})
-            self.assertEqual(latest["result"]["player_statusbar"]["B"], {"hp": 90})
+            self.assertEqual(latest["result"]["player_statusbar"]["P2"], {"hp": 90})
             self.assertEqual(
-                [item["kind"] for item in await database.get_role_history("A")],
+                [item["kind"] for item in await database.get_role_history("P1")],
                 ["action", "narration", "statusbar"],
             )
 

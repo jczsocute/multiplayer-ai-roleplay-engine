@@ -20,7 +20,7 @@ except ModuleNotFoundError:  # Supports: python client/terminal.py
     from display import room_message_text, to_yaml
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 STATUS_LABELS = {
     "LOBBY": ("大厅等待", "grey50"),
@@ -39,7 +39,7 @@ PROCESSING_LABELS = {
 PLAYER_DRAFT_HINT = "当前角色行动；也可配合 /chat 发送房间聊天"
 SPECTATOR_DRAFT_HINT = "房间聊天内容（使用 /chat 发送）"
 PLAYER_COMMAND_HINT = "/submit /cancel /pause /resume /status /chat /help /quit"
-SPECTATOR_COMMAND_HINT = "/chat /view A /view B /help /quit"
+SPECTATOR_COMMAND_HINT = "/chat /view P1…PN /help /quit"
 
 PLAYER_HELP = """玩家命令：
 /submit  提交当前 Draft 作为角色行动
@@ -50,14 +50,6 @@ PLAYER_HELP = """玩家命令：
 /chat    将当前 Draft 发送到房间聊天
 /help    显示本帮助
 /quit    退出客户端"""
-
-SPECTATOR_HELP = """观众命令：
-/chat    将当前 Draft 发送到房间聊天
-/view A  查看 Player A 历史
-/view B  查看 Player B 历史
-/help    显示本帮助
-/quit    退出客户端"""
-
 
 class GameApp(App):
     CSS_PATH = Path(__file__).with_name("tui.css")
@@ -83,13 +75,14 @@ class GameApp(App):
         self.draft_revision = 0
         self.player_states: dict = {}
         self.presence: list[dict] = []
+        self.roles: list[dict] = []
         self.processing_stage: str | None = None
         self.processing_started = 0.0
 
     def compose(self) -> ComposeResult:
         yield Static("正在连接服务器…", id="identity")
         yield RichLog(id="history", wrap=True, markup=False, auto_scroll=False)
-        yield Static("A ■ 无人扮演        B ■ 无人扮演", id="collaboration")
+        yield Static("等待角色信息…", id="collaboration")
         yield Static("Draft：", id="draft-label")
         yield TextArea(
             "",
@@ -133,6 +126,7 @@ class GameApp(App):
                 )
             self.role = message.get("role")
             self.view_role = message.get("view_role")
+            self.roles = message.get("roles", [])
             self.scenario = message["scenario"]
             self._update_identity()
             self._enable_commands()
@@ -208,7 +202,8 @@ class GameApp(App):
             return
         if self.role is None:
             parts = command.split()
-            if len(parts) == 2 and parts[0] == "/view" and parts[1].upper() in ("A", "B"):
+            role_ids = {item["id"] for item in self.roles}
+            if len(parts) == 2 and parts[0] == "/view" and parts[1].upper() in role_ids:
                 await self._send({"type": "view", "role": parts[1].upper()})
                 return
             self._append(Text("观众命令无效；输入 /help 查看可用命令。", style="yellow"))
@@ -302,7 +297,14 @@ class GameApp(App):
         self.query_one("#command-input", Input).placeholder = command_hint
 
     def _show_help(self) -> None:
-        content = PLAYER_HELP if self.role else SPECTATOR_HELP
+        role_lines = "\n".join(
+            f"/view {item['id']}  查看 {item['name']} 历史" for item in self.roles
+        )
+        spectator_help = (
+            "观众命令：\n/chat    将当前 Draft 发送到房间聊天\n"
+            f"{role_lines}\n/help    显示本帮助\n/quit    退出客户端"
+        )
+        content = PLAYER_HELP if self.role else spectator_help
         self._append(Panel(content, title="命令帮助", border_style="cyan"))
 
     def _enable_commands(self) -> None:
@@ -358,7 +360,8 @@ class GameApp(App):
 
     def _update_collaboration(self, players: dict) -> None:
         line = Text()
-        for index, role in enumerate(("A", "B")):
+        role_ids = [item["id"] for item in self.roles] or list(players)
+        for index, role in enumerate(role_ids):
             value = players.get(role, {})
             status = value.get("status", "EDITING") if isinstance(value, dict) else value
             connected = value.get("connected", False) if isinstance(value, dict) else False
@@ -400,10 +403,15 @@ class GameApp(App):
         self.view_role = message.get("role")
         history = self.query_one("#history", RichLog)
         history.clear()
+        opening = str(message.get("opening", "")).strip()
+        if opening:
+            history.write(
+                Panel(opening, title="开场", border_style="cyan"), scroll_end=False
+            )
         entries = message.get("history", [])
         for item in entries:
             self._write_role_entry(history, int(item["round"]), item)
-        if not entries:
+        if not entries and not opening:
             history.write(Text("该角色尚无历史。", style="dim"), scroll_end=False)
         history.scroll_end(animate=False)
         if "draft" in message:

@@ -26,15 +26,17 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
                 "type": "joined",
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,
                 "scenario": "test",
+                "roles": [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}],
             })
             await app._handle_message({
                 "type": "role_view",
-                "role": "A",
+                "role": "P1",
+                "opening": "风雨中的开场",
                 "history": [
                     {"round": 1, "kind": "action", "content": "检查房门"},
                     {"round": 1, "kind": "narration", "content": "门后传来脚步声"},
@@ -47,9 +49,10 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
                 "public_information": {"禁止展示": "幕后倒计时"},
             })
 
-            self.assertEqual(app.view_role, "A")
+            self.assertEqual(app.view_role, "P1")
             self.assertEqual(app._draft_editor().text, "")
             rendered = "\n".join(line.text for line in app.query_one("#history", RichLog).lines)
+            self.assertLess(rendered.index("风雨中的开场"), rendered.index("第 1 轮行动"))
             self.assertLess(rendered.index("第 1 轮行动"), rendered.index("第 1 轮输出"))
             self.assertLess(rendered.index("第 1 轮输出"), rendered.index("第 1 轮状态栏"))
             self.assertLess(rendered.index("第 1 轮状态栏"), rendered.index("第 2 轮行动"))
@@ -65,16 +68,17 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)):
             await app._handle_message({
                 "type": "joined",
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "name": "Tester",
                 "role": None,
-                "view_role": "A",
+                "view_role": "P1",
                 "scenario": "test",
+                "roles": [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}],
             })
             await app._handle_message({
                 "type": "role_round",
                 "round": 2,
-                "role": "A",
+                "role": "P1",
                 "entries": [
                     {"kind": "action", "content": "推开房门"},
                     {"kind": "narration", "content": "新的叙事"},
@@ -95,11 +99,12 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)) as pilot:
             await app._handle_message({
                 "type": "joined",
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,
                 "scenario": "test",
+                "roles": [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}],
             })
             command = app.query_one("#command-input", Input)
             command.value = "/submit"
@@ -107,9 +112,9 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             self.assertEqual(app.sent, [])
 
-            command.value = "/view A"
+            command.value = "/view P1"
             await pilot.press("enter")
-            self.assertEqual(app.sent[-1], {"type": "view", "role": "A"})
+            self.assertEqual(app.sent[-1], {"type": "view", "role": "P1"})
 
             editor = app._draft_editor()
             editor.load_text("OOC hello")
@@ -123,11 +128,12 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(100, 36)) as pilot:
             await app._handle_message({
                 "type": "joined",
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "name": "Tester",
                 "role": None,
                 "view_role": None,
                 "scenario": "test",
+                "roles": [{"id": "P1", "name": "角色1"}, {"id": "P2", "name": "角色2"}],
             })
             editor = app._draft_editor()
             command = app.query_one("#command-input", Input)
@@ -142,8 +148,8 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
 
             await app._handle_message({
                 "type": "identity_changed",
-                "role": "A",
-                "view_role": "A",
+                "role": "P1",
+                "view_role": "P1",
             })
             self.assertIn("角色行动", editor.placeholder)
             self.assertIn("/submit", command.placeholder)
@@ -156,7 +162,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
     async def test_draft_and_command_are_independent(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 32)) as pilot:
-            app.role = "A"
+            app.role = "P1"
             app.round_number = 1
             app._set_editor_status("EDITING")
             editor = app.query_one("#draft-editor", TextArea)
@@ -182,8 +188,8 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             app._apply_round_state({
                 "round": 1,
                 "players": {
-                    "A": {"status": "READY", "connected": True},
-                    "B": {"status": "EDITING", "connected": True},
+                    "P1": {"status": "READY", "connected": True},
+                    "P2": {"status": "EDITING", "connected": True},
                 },
             })
             self.assertTrue(editor.read_only)
@@ -198,8 +204,8 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             app._apply_round_state({
                 "round": 1,
                 "players": {
-                    "A": {"status": "EDITING", "connected": True},
-                    "B": {"status": "EDITING", "connected": True},
+                    "P1": {"status": "EDITING", "connected": True},
+                    "P2": {"status": "EDITING", "connected": True},
                 },
             })
             self.assertFalse(editor.read_only)
@@ -214,7 +220,7 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
     async def test_next_round_clears_draft(self) -> None:
         app = TestGameApp()
         async with app.run_test(size=(100, 32)):
-            app.role = "A"
+            app.role = "P1"
             app.round_number = 1
             editor = app.query_one("#draft-editor", TextArea)
             editor.load_text("上一轮行动")
@@ -223,8 +229,8 @@ class DraftEditorTests(unittest.IsolatedAsyncioTestCase):
             app._apply_round_state({
                 "round": 2,
                 "players": {
-                    "A": {"status": "EDITING", "connected": True},
-                    "B": {"status": "EDITING", "connected": True},
+                    "P1": {"status": "EDITING", "connected": True},
+                    "P2": {"status": "EDITING", "connected": True},
                 },
             })
 

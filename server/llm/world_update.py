@@ -16,7 +16,30 @@ class WorldUpdater:
         self.instructions = self.loader.text("prompts/world_update.md")
         self.max_tokens = max_tokens
 
-    async def update(self, current_world_state: str, action_a: str, action_b: str) -> dict:
+    async def update(
+        self, current_world_state: str, actions: dict[str, str]
+    ) -> dict:
+        missing_actions = [role_id for role_id in self.loader.role_ids if role_id not in actions]
+        if missing_actions:
+            raise ValueError(f"missing actions for roles: {', '.join(missing_actions)}")
+        role_sections = []
+        action_sections = []
+        for role_id in self.loader.role_ids:
+            display_name = self.loader.character_name(role_id)
+            role_sections.append(
+                f"""# 角色 {role_id}（{display_name}）设定
+
+{self.loader.character(role_id)}
+
+# 角色 {role_id}（{display_name}）状态栏定义
+
+{json.dumps(self.loader.statusbar(role_id), ensure_ascii=False, indent=2)}"""
+            )
+            action_sections.append(
+                f"""## {role_id}（{display_name}）
+
+{actions[role_id]}"""
+            )
         input_text = f"""# 创作规范
 
 {self.loader.text("prompts/ai_guidelines.md")}
@@ -25,21 +48,7 @@ class WorldUpdater:
 
 {self.loader.text("world/world.md")}
 
-# 角色 A 设定
-
-{self.loader.character("A")}
-
-# 角色 A 状态
-
-{json.dumps(self.loader.statusbar("A"), ensure_ascii=False, indent=2)}
-
-# 角色 B 设定
-
-{self.loader.character("B")}
-
-# 角色 B 状态
-
-{json.dumps(self.loader.statusbar("B"), ensure_ascii=False, indent=2)}
+{chr(10).join(role_sections)}
 
 # 当前世界
 
@@ -47,13 +56,7 @@ class WorldUpdater:
 
 # 本轮角色行动
 
-## 角色 A
-
-{action_a}
-
-## 角色 B
-
-{action_b}
+{chr(10).join(action_sections)}
 
 # JSON 输出格式示例
 
@@ -74,14 +77,14 @@ class WorldUpdater:
             raise ValueError("world update is missing public_information")
         views = result.get("player_views")
         if not isinstance(views, dict) or not all(
-            isinstance(views.get(player_id), dict) for player_id in ("A", "B")
+            isinstance(views.get(role_id), dict) for role_id in self.loader.role_ids
         ):
-            raise ValueError("world update is missing player views for A and B")
+            raise ValueError("world update is missing one or more role views")
         statusbar = result.get("player_statusbar")
         if not isinstance(statusbar, dict) or not all(
-            isinstance(statusbar.get(player_id), dict) for player_id in ("A", "B")
+            isinstance(statusbar.get(role_id), dict) for role_id in self.loader.role_ids
         ):
-            raise ValueError("world update is missing player statusbar for A and B")
+            raise ValueError("world update is missing one or more role statusbars")
         return result
 
     @staticmethod
