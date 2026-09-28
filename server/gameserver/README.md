@@ -29,13 +29,14 @@ LLM_MODEL=deepseek-flash
 WORLD_UPDATE_MAX_TOKENS=8192
 NARRATION_MAX_TOKENS=4096
 NARRATOR_HISTORY_ROUNDS=20
-DISCONNECT_GRACE_SECONDS=60
 MIN_ROLE_COUNT=2
 MAX_ROLE_COUNT=4
-ALLOWED_ORIGINS=
 ```
 
 `ROOM_KEY` / `--no-room-key` 只属于 legacy single-game 模式。Platform Room 使用公开 `room_code` 与可选 `room_password`，不会把 Room Key 继续扩展为平台身份机制。
+`DISCONNECT_GRACE_SECONDS` 同样只供旧单局入口使用；Platform Room 的成员宽限期
+由 `ROOM_DISCONNECT_TIMEOUT_SECONDS` 控制。WebSocket `ALLOWED_ORIGINS` 属于
+Platform Web 配置。
 
 ## 剧本与 Game payload
 

@@ -36,6 +36,7 @@ PLATFORM_DB=data/platform.db
 ALLOW_REGISTRATION=true
 AUTH_SESSION_DAYS=30
 AUTH_COOKIE_SECURE=false
+ALLOWED_ORIGINS=
 UI_FONT_SCALE=0.8
 MAX_ROOM_USERS=10
 ROOM_DISCONNECT_TIMEOUT_SECONDS=300
@@ -43,6 +44,8 @@ ROOM_DISCONNECT_TIMEOUT_SECONDS=300
 
 - `PLATFORM_DB`：平台唯一 metadata SQLite。
 - `AUTH_COOKIE_SECURE=true`：只在 HTTPS 环境启用。
+- `ALLOWED_ORIGINS`：浏览器 WebSocket 的 Origin 白名单，多个来源用逗号分隔；
+  留空时允许同源及本机浏览器来源。本机 Admin 客户端不发送 Origin。
 - `ACCOUNTS_DB=data/accounts.db`：仅作为旧 Account v0.1 一次性导入来源；不是新平台数据库。
 
 空平台正常启动不要求 LLM 配置；创建/恢复实际 Room Runtime 时需要 GameServer
@@ -197,6 +200,11 @@ python -m server.main \
 
 命令验证 owner 和源目录，为 Template 生成 `tmpl_*` ID，将 payload 复制到稳定目录，再写入 metadata。
 
+迁移旧部署时，也可用 `python -m server.main --bootstrap-templates --owner Alice`
+幂等登记明确列出的 `love_story` 与 `three_player_test` 本机旧内容。目录缺失时跳过；
+启动不会扫描并自动登记任意 `templates/` 目录。这是旧内容兼容命令，仓库不提交
+这些剧本 payload。
+
 旧 Game 必须显式声明 owner 后导入，不会在启动时自动登记：
 
 ```bash
@@ -206,6 +214,7 @@ python -m server.main --import-game old_game --owner Alice --name "Old Game"
 ## 当前限制
 
 - RoomManager 是单进程内存管理器，不支持分布式/横向扩展。
-- 没有 Template Web Editor、ZIP upload 或完整 Game library 管理。
+- Template Web Editor、ZIP upload/export 尚未实现；当前 Web 仅提供剧本
+  scaffold、目录详情和资源管理操作。
 - 没有持久化 room membership；重启后所有客户端重新连接。
 - legacy Game 目录不会自动登记进平台 catalog。
