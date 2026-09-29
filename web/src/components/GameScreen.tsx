@@ -16,6 +16,7 @@ type Props = {
   sendChat: () => void;
   leave: () => void;
   closeRoom?: () => void;
+  exportHistory?: () => Promise<string | null>;
   setTab: (tab: MobileTab) => void;
 };
 
@@ -28,7 +29,7 @@ const connectionLabel: Record<string, string> = {
   ERROR: "连接错误",
 };
 
-export function GameScreen({ state, send, setAction, setChat, sendChat, leave, closeRoom, setTab }: Props) {
+export function GameScreen({ state, send, setAction, setChat, sendChat, leave, closeRoom, exportHistory, setTab }: Props) {
   const ownStatus = state.role ? state.players[state.role]?.status : undefined;
   const disconnected = state.connection !== "CONNECTED";
   const ownCharacter = state.role ? state.players[state.role]?.character_name : null;
@@ -60,6 +61,7 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
             roles={state.roles}
             users={state.presence.filter((user) => user.user_id !== undefined)}
             closeRoom={closeRoom}
+            exportHistory={exportHistory}
             send={send}
           />
         )}
@@ -67,7 +69,7 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
       </div>
     </header>
     {state.connection === "RECONNECTING" && <div className="disconnect-banner">
-      正在重新连接… 若超过 60 秒仍未恢复，会话可能已失效。
+      正在重新连接… 若超过 {state.roomDisconnectTimeoutSeconds} 秒仍未恢复，会话可能已失效。
       <button className="secondary" onClick={leave}>返回登录页</button>
     </div>}
     {state.errors.length > 0 && <div className="error-banner">{state.errors.at(-1)}</div>}

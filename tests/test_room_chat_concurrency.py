@@ -13,9 +13,8 @@ from tests.support import user
 
 WORLD_RESULT = {
     "world_state": {"gate": "open"},
-    "public_information": {"time": "noon"},
-    "player_views": {"P1": {"seen": 1}, "P2": {"seen": 2}},
-    "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 100}},
+    "character_views": {"P1": {"seen": 1}, "P2": {"seen": 2}},
+    "character_status": {"P1": {"hp": 100}, "P2": {"hp": 100}},
 }
 
 
@@ -42,11 +41,6 @@ class BlockingWorldUpdater:
         return WORLD_RESULT
 
 
-class UnusedViews:
-    async def generate(self, player_id: str, world_state: object) -> str:
-        raise AssertionError("normal flow must reuse WorldUpdater views")
-
-
 class StubNarrator:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -54,9 +48,8 @@ class StubNarrator:
     async def narrate(
         self,
         player_id: str,
-        public_world_info: object,
-        player_view: object,
-        player_statusbar: object,
+        character_view: object,
+        character_status: object,
         chat_history: list,
     ) -> dict:
         self.calls.append(player_id)
@@ -71,7 +64,7 @@ class ProcessingRoomChatTests(unittest.IsolatedAsyncioTestCase):
     async def make_server(self, updater: BlockingWorldUpdater) -> GameServer:
         database = Database(str(Path(self.directory.name) / "game.db"))
         await database.initialize()
-        return GameServer(database, updater, UnusedViews(), StubNarrator(), 1)
+        return GameServer(database, updater, StubNarrator(), 1)
 
     async def submit_until_processing(self, server: GameServer, sockets: dict) -> asyncio.Task:
         """Submit both players; return the task that is stuck inside WorldUpdater."""

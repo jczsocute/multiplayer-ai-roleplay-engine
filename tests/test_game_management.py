@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from server.platform.catalog import (
     copy_game, create_game_snapshot, delete_game, import_template, next_copy_name,
@@ -34,6 +35,35 @@ class GameManagementTests(unittest.TestCase):
 
     def payload(self, game_id: str) -> Path:
         return self.games_dir / game_id
+
+    def test_snapshot_copy_failure_removes_staging_without_metadata(self) -> None:
+        def partial_copy(_source: Path, target: Path) -> None:
+            target.mkdir()
+            (target / "partial").write_text("partial")
+            raise OSError("copy failed")
+
+        with patch("server.platform.catalog.shutil.copytree", side_effect=partial_copy):
+            with self.assertRaises(OSError):
+                create_game_snapshot(self.database, self.template.id, self.alice.id,
+                                     "failed", self.templates_dir, self.games_dir)
+        self.assertEqual([game.name for game in self.database.list_user_games(self.alice.id)], ["love_story"])
+        self.assertEqual(sorted(path.name for path in self.games_dir.iterdir()), [self.game.id])
+        self.assertTrue((self.templates_dir / self.template.id / "metadata.json").is_file())
+
+    def test_snapshot_rename_failure_rolls_back_metadata_and_staging(self) -> None:
+        original_rename = Path.rename
+
+        def fail_staging_rename(path: Path, target: Path) -> Path:
+            if path.name.endswith(".creating"):
+                raise OSError("rename failed")
+            return original_rename(path, target)
+
+        with patch.object(Path, "rename", fail_staging_rename):
+            with self.assertRaises(OSError):
+                create_game_snapshot(self.database, self.template.id, self.alice.id,
+                                     "failed", self.templates_dir, self.games_dir)
+        self.assertEqual([game.name for game in self.database.list_user_games(self.alice.id)], ["love_story"])
+        self.assertEqual(sorted(path.name for path in self.games_dir.iterdir()), [self.game.id])
 
     # --- naming -------------------------------------------------------------
 

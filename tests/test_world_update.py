@@ -1,13 +1,15 @@
 import json
+import copy
 import sqlite3
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from server.gameserver.database import Database
 from server.gameserver.llm.narrator import Narrator
-from server.gameserver.llm.player_view import PlayerViewGenerator
 from server.gameserver.llm.world_update import WorldUpdater
+from server.gameserver.llm.prompt_loader import PromptLoader
 from server.gameserver.game_server import GameServer
 from server.gameserver.models import PlayerStatus
 from tests.support import user
@@ -21,9 +23,8 @@ class MockWorldUpdater:
         self.calls.append((current_world_state, actions))
         return {
             "world_state": {"gate": "open"},
-            "public_information": {"time": "noon"},
-            "player_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
-            "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 100}},
+            "character_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
+            "character_status": {"P1": {"hp": 100}, "P2": {"hp": 100}},
         }
 
 
@@ -34,24 +35,14 @@ class MockNarrator:
     async def narrate(
         self,
         player_id: str,
-        public_world_info: str,
-        player_view: str,
-        player_statusbar: dict,
+        character_view: str,
+        character_status: dict,
         chat_history: list,
     ) -> dict:
         self.calls.append(
-            (player_id, public_world_info, player_view, player_statusbar, chat_history)
+            (player_id, character_view, character_status, chat_history)
         )
         return {"text": f"Narration for {player_id}.", "status": {}}
-
-
-class MockPlayerViews:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def generate(self, player_id: str, world_state: str) -> str:
-        self.calls.append((player_id, world_state))
-        return f"Recovered view for {player_id}."
 
 
 class FlakyNarrator(MockNarrator):
@@ -62,13 +53,12 @@ class FlakyNarrator(MockNarrator):
     async def narrate(
         self,
         player_id: str,
-        public_world_info: str,
-        player_view: str,
-        player_statusbar: dict,
+        character_view: str,
+        character_status: dict,
         chat_history: list,
     ) -> dict:
         self.calls.append(
-            (player_id, public_world_info, player_view, player_statusbar, chat_history)
+            (player_id, character_view, character_status, chat_history)
         )
         if player_id == "P2" and not self.failed_once:
             self.failed_once = True
@@ -126,13 +116,89 @@ class FakeWebSocket:
 
 
 class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_character_status_skips_disabled_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "story"
+            shutil.copytree("templates/default", root)
+            (root / "characters/2/character_status_schema.json").unlink()
+            (root / "characters/2/character_status_initial.json").unlink()
+            loader = PromptLoader(str(root))
+            p1_status = {key: "updated" for key in loader.character_status_schema("P1")}
+            output = {
+                "world_state": {"world_information": "updated"},
+                "character_views": {
+                    "P1": {"world_information": "first"},
+                    "P2": {"world_information": "second"},
+                },
+                "character_status": {"P1": p1_status},
+            }
+            updater = WorldUpdater(JsonLLM(output), loader)
+            self.assertEqual(await updater.update("{}", {"P1": "a", "P2": "b"}), output)
+
+            database = Database(str(Path(directory) / "game.db"), loader.role_ids, ("P1",))
+            await database.initialize(loader.json("world/world_state_initial.json"),
+                                      {"P1": loader.character_status_initial("P1")})
+            narrator = MockNarrator()
+            server = GameServer(database, updater, narrator, owner_user_id=1)
+            first, second = FakeWebSocket(), FakeWebSocket()
+            await server.sessions.join(user(1, "Alice"), first)
+            await server.sessions.join(user(2, "Bob"), second)
+            await server.sessions.assign_roles({"P1": 1, "P2": 2})
+            from server.gameserver.models import CompletedRound
+            completed = CompletedRound(1, {"P1": "a", "P2": "b"})
+            server.rounds.begin_reprocess(completed)
+            await server._process_round(completed)
+            p2_round = next(message for message in second.messages if message["type"] == "role_round")
+            self.assertIsNone(p2_round["character_status"])
+            self.assertFalse(any(entry["kind"] == "character_status" for entry in p2_round["entries"]))
+            self.assertNotIn("character_view", p2_round)
+            self.assertNotIn("world_state", p2_round)
+            self.assertIsNone((await database.get_player_display("P2"))["character_status"])
+
+    async def test_game_sqlite_connections_use_busy_timeout_and_wal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(str(Path(directory) / "game.db"))
+            await database.initialize()
+            with database._connect() as connection:
+                self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
+                self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    async def test_world_updater_rejects_incomplete_or_unknown_role_outputs(self) -> None:
+        valid = {
+            "world_state": {"world_information": "updated"},
+            "character_views": {"P1": {"world_information": "gate"},
+                                "P2": {"world_information": "road"}},
+            "character_status": {
+                role: {key: "updated" for key in WorldUpdater(JsonLLM({})).loader.character_status_schema(role)}
+                for role in ("P1", "P2")
+            },
+        }
+        for field in ("character_views", "character_status"):
+            for problem in ("missing", "extra", "invalid"):
+                with self.subTest(field=field, problem=problem):
+                    output = copy.deepcopy(valid)
+                    if problem == "missing":
+                        del output[field]["P2"]
+                    elif problem == "extra":
+                        output[field]["P3"] = {}
+                    else:
+                        output[field]["P1"] = []
+                    with self.assertRaises(ValueError):
+                        await WorldUpdater(JsonLLM(output)).update("{}", {"P1": "a", "P2": "b"})
+
+        for field in ("world_state", "character_views", "character_status"):
+            with self.subTest(field=field, problem="top-level type"):
+                output = copy.deepcopy(valid)
+                output[field] = []
+                with self.assertRaises(ValueError):
+                    await WorldUpdater(JsonLLM(output)).update("{}", {"P1": "a", "P2": "b"})
+
     async def test_narrator_uses_visible_inputs_and_returns_structure(self) -> None:
         llm = MockLLM("You see the open gate.")
         narrator = Narrator(llm)
 
         result = await narrator.narrate(
             "P1",
-            "It is noon.",
             "The gate is visible.",
             {"左腿": "严重受伤"},
             [{"role": "player", "content": "look"}],
@@ -140,28 +206,22 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["text"], "You see the open gate.")
         self.assertEqual(result["status"], {})
-        self.assertIn("It is noon.", llm.user_prompt)
         self.assertIn("The gate is visible.", llm.user_prompt)
         self.assertIn("严重受伤", llm.user_prompt)
         self.assertNotIn("world_state", llm.user_prompt)
 
-    async def test_player_view_generator_builds_player_specific_prompt(self) -> None:
-        llm = MockLLM()
-        generator = PlayerViewGenerator(llm)
-
-        result = await generator.generate("P1", "objective state")
-
-        self.assertEqual(result, "# Updated World")
-        self.assertIn("感知信息管理者", llm.system_prompt)
-        for expected in ("世界设定", "P1（林岚）", "objective state"):
-            self.assertIn(expected, llm.user_prompt)
+        await narrator.narrate("P1", {"seen": "gate"}, None, [])
+        self.assertNotIn("# 角色当前状态", llm.user_prompt)
 
     async def test_world_updater_builds_prompt_without_real_api(self) -> None:
         expected = {
-            "world_state": {"phase": "updated"},
-            "public_information": {"time": "noon"},
-            "player_views": {"P1": {"seen": "gate"}, "P2": {"seen": "road"}},
-            "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 90}},
+            "world_state": {"world_information": "updated"},
+            "character_views": {"P1": {"world_information": "gate"},
+                                "P2": {"world_information": "road"}},
+            "character_status": {
+                role: {key: "updated" for key in WorldUpdater(JsonLLM({})).loader.character_status_schema(role)}
+                for role in ("P1", "P2")
+            },
         }
         llm = JsonLLM(expected)
         updater = WorldUpdater(llm)
@@ -173,9 +233,9 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected)
         self.assertTrue(llm.json_mode)
         self.assertEqual(llm.max_tokens, 8192)
-        self.assertIn("严格输出合法 JSON", llm.system_prompt)
-        self.assertIn('"player_statusbar"', llm.user_prompt)
-        self.assertIn("world_updater_output.json", llm.system_prompt)
+        self.assertIn("只输出合法 JSON", llm.system_prompt)
+        self.assertIn('"character_status"', llm.user_prompt)
+        self.assertIn('"world_information"', llm.user_prompt)
         for expected in ("世界设定", "P1", "P2", "old state", "action P1", "action P2"):
             self.assertIn(expected, llm.user_prompt)
 
@@ -185,9 +245,8 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(path))
             await database.initialize()
             updater = MockWorldUpdater()
-            player_views = MockPlayerViews()
             narrator = MockNarrator()
-            server = GameServer(database, updater, player_views, narrator, owner_user_id=1)
+            server = GameServer(database, updater, narrator, owner_user_id=1)
             websocket = FakeWebSocket()
             player_p1_socket = FakeWebSocket()
             player_p2_socket = FakeWebSocket()
@@ -212,12 +271,13 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({call[0] for call in narrator.calls}, {"P1", "P2"})
             self.assertTrue(
                 all(
-                    json.loads(call[1]) == {"time": "noon"}
+                    call[1] == {"gate": "visible"} if call[0] == "P1"
+                    else call[1] == {"road": "visible"}
                     for call in narrator.calls
                 )
             )
             self.assertEqual(
-                {call[0]: call[3] for call in narrator.calls},
+                {call[0]: call[2] for call in narrator.calls},
                 {"P1": {"hp": 100}, "P2": {"hp": 100}},
             )
             self.assertEqual(
@@ -240,6 +300,10 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 ],
                 ["Narration for P2."],
             )
+            for socket in (player_p1_socket, player_p2_socket):
+                live = next(message for message in socket.messages if message["type"] == "role_round")
+                self.assertEqual(live["round"], 1)
+                self.assertEqual({entry["round"] for entry in live["entries"]}, {1})
             self.assertFalse(any(
                 message["type"] == "world_update"
                 for message in player_p1_socket.messages + player_p2_socket.messages
@@ -270,13 +334,12 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     connection.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0], 4
                 )
-                self.assertEqual(
-                    connection.execute("SELECT content FROM public_world_info").fetchone()[0],
-                    '{"time": "noon"}',
-                )
+                self.assertIsNone(connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'public_world_info'"
+                ).fetchone())
                 views = dict(
                     connection.execute(
-                        "SELECT player_id, view_content FROM player_views WHERE round_id = 1"
+                        "SELECT player_id, character_view_content FROM character_views WHERE round_id = 1"
                     ).fetchall()
                 )
                 self.assertEqual(
@@ -292,9 +355,8 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize("initial world")
             updater = MockWorldUpdater()
-            player_views = MockPlayerViews()
             narrator = FlakyNarrator()
-            server = GameServer(database, updater, player_views, narrator, owner_user_id=1)
+            server = GameServer(database, updater, narrator, owner_user_id=1)
             websocket = FakeWebSocket()
             await server.sessions.join(user(1, "P1"), websocket)
             await server.sessions.join(user(2, "P2"), FakeWebSocket())
@@ -343,7 +405,7 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(
                     connection.execute(
-                        "SELECT COUNT(*) FROM player_views WHERE round_id = 1"
+                        "SELECT COUNT(*) FROM character_views WHERE round_id = 1"
                     ).fetchone()[0],
                     2,
                 )

@@ -182,6 +182,7 @@ async def _run_platform(
     rooms = RoomManager(
         database, max_users=settings.max_room_users,
         min_role_count=min_role_count, max_role_count=max_role_count,
+        disconnect_timeout_seconds=settings.room_disconnect_timeout_seconds,
     )
     # Registered payloads only: idempotent, so a normal startup is a no-op. This
     # also backfills `metadata.json.title` and mirrors it into the catalog row.

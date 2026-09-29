@@ -23,31 +23,27 @@ class Narrator:
 
     async def narrate(
         self,
-        player_id: str,
-        public_world_info: object,
-        player_view: object,
-        player_statusbar: object,
+        role_id: str,
+        character_view: object,
+        character_status: object | None,
         chat_history: list[dict[str, str]],
     ) -> dict:
+        status_section = (
+            f"\n# 角色当前状态\n\n{self._format(character_status)}\n"
+            if character_status is not None else ""
+        )
         input_text = f"""# 角色设定
 
-{self.loader.character(player_id)}
+{self.loader.character(role_id)}
 
 # 当前角色
 
-{player_id}（{self.loader.character_name(player_id)}）
-
-# 公共世界信息
-
-{self._format(public_world_info)}
+{role_id}（{self.loader.character_name(role_id)}）
 
 # 角色可见信息
 
-{self._format(player_view)}
-
-# 角色当前状态
-
-{self._format(player_statusbar)}
+{self._format(character_view)}
+{status_section}
 
 # 历史剧情
 

@@ -3,10 +3,13 @@ import GameApp from "./GameApp";
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { AuthScreen } from "./components/AuthScreen";
 import { PlatformHome } from "./components/PlatformHome";
+import { TemplateEditor } from "./components/TemplateEditor";
 import { humanizeError } from "./errors";
 import { formatLocalTime } from "./lobby";
 import type { AuthUser } from "./protocol";
 import type { GameItem, RoomItem, TemplateItem } from "./types";
+import { downloadTemplateZip, uploadTemplateZip } from "./templateZip";
+import { downloadGameHistory } from "./gameHistory";
 
 type UiConfig = {
   platform_mode?: boolean;
@@ -69,6 +72,7 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
   const [currentRoom, setCurrentRoom] = useState<RoomItem | null>(null);
   const [recoveryFailedRoom, setRecoveryFailedRoom] = useState<string | null>(null);
   const [activeRoom, setActiveRoom] = useState<{ code: string; password: string } | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -199,6 +203,7 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
       setUser(null);
       setTemplates([]); setPublicTemplates([]); setMyTemplates([]);
       setGames([]); setRooms([]); setCurrentRoom(null); setRecoveryFailedRoom(null);
+      setEditingTemplateId(null);
       clearMessages();
     });
   };
@@ -212,11 +217,19 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
   const deleteGame = async (game: GameItem) => {
     await run(() => apiDelete<{ ok: boolean }>(`/api/games/${game.id}`), "存档已删除。");
   };
+  const exportGameHistory = async (game: GameItem) => {
+    clearMessages();
+    const failure = await downloadGameHistory("game", game.id);
+    if (failure) setError(failure);
+  };
   const createTemplate = async (name: string, roleCount: number) => {
-    await run(
-      () => apiPost<TemplateItem>("/api/templates", { name, role_count: roleCount }),
-      "剧本已创建（默认私有）。",
-    );
+    clearMessages();
+    setBusy(true);
+    const result = await apiPost<TemplateItem>("/api/templates", { name, role_count: roleCount });
+    setBusy(false);
+    if (!result.ok) { setError(result.error); return; }
+    await refreshAll();
+    setEditingTemplateId(result.data.id);
   };
   const renameTemplate = async (template: TemplateItem, name: string) => {
     await run(
@@ -248,6 +261,20 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
       "剧本已删除，已有存档不受影响。",
     );
   };
+  const importTemplateZip = async (file: File) => {
+    clearMessages();
+    setBusy(true);
+    const result = await uploadTemplateZip(file);
+    setBusy(false);
+    if (!result.ok) { setError(result.error); return; }
+    await refreshAll();
+    setEditingTemplateId(result.data.id);
+  };
+  const exportTemplateZip = async (template: TemplateItem) => {
+    clearMessages();
+    const failure = await downloadTemplateZip(template.id);
+    if (failure) setError(failure);
+  };
 
   if (!checked) {
     return <main className="join-shell"><div className="join-card">
@@ -261,6 +288,9 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
       setNotice(`已于 ${formatLocalTime(new Date().toISOString())} 离开房间。`);
     }} />;
   }
+  if (editingTemplateId) return <TemplateEditor templateId={editingTemplateId}
+    roleCounts={counts} onBack={() => setEditingTemplateId(null)}
+    onSaved={async () => { await refreshAll(); }} />;
   return <PlatformHome
     userId={user.id} username={user.username} roleCounts={counts}
     templates={templates} publicTemplates={publicTemplates}
@@ -276,8 +306,12 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
     onCloseRoom={closeRoom}
     onSearch={searchRoom}
     onRenameGame={renameGame} onCopyGame={copyGame} onDeleteGame={deleteGame}
+    onExportGameHistory={exportGameHistory}
     onCreateTemplate={createTemplate} onRenameTemplate={renameTemplate}
     onToggleTemplateVisibility={toggleTemplateVisibility}
     onLoadTemplateDetail={loadTemplateDetail}
+    onEditTemplate={(template) => setEditingTemplateId(template.id)}
+    onImportTemplateZip={(file) => void importTemplateZip(file)}
+    onExportTemplateZip={(template) => void exportTemplateZip(template)}
     onCopyTemplate={copyTemplate} onDeleteTemplate={deleteTemplate} />;
 }

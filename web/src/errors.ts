@@ -38,7 +38,6 @@ const MESSAGES: Record<string, string> = {
   unknown_role: "未知角色",
   roles_not_assigned: "角色尚未分配",
   world_update_failed: "世界更新失败，房主可以重试本回合",
-  player_view_failed: "角色视角生成失败，房主可以重试本回合",
   // catalog
   game_not_found: "存档不存在",
   template_not_found: "剧本不存在",
@@ -46,6 +45,12 @@ const MESSAGES: Record<string, string> = {
   game_is_active: "该存档正在房间中使用",
   invalid_game_name: "存档名称无效（1–60 个字符）",
   invalid_template_name: "剧本名称无效（1–60 个字符）",
+  invalid_editor_content: "剧本内容无效，请检查标签、简介或文件结构",
+  invalid_role_count: "角色数量不在当前服务器允许范围内",
+  invalid_template_zip: "ZIP 剧本格式或内容无效，请检查目录和必需文件",
+  template_zip_too_large: "ZIP 剧本超过大小限制",
+  game_processing: "请等待本轮完成……",
+  game_history_unavailable: "存档历史暂时无法导出",
   // admin
   account_not_found: "账号不存在",
   user_owns_resources: "该账号仍拥有剧本 / 存档 / 活跃房间，无法删除",

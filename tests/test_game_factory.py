@@ -17,7 +17,9 @@ from starlette.testclient import TestClient
 from server.config import Settings
 from server.gameserver import factory as factory_module
 from server.gameserver.factory import load_game_server
-from server.platform.catalog import create_game_snapshot, import_template
+from server.platform.catalog import (
+    create_game_snapshot, create_template_from_scaffold, import_template,
+)
 from server.platform.database import PlatformDatabase
 from server.platform.room_manager import RoomManager
 from server.platform.web import create_platform_app
@@ -62,10 +64,46 @@ class GameFactoryTests(unittest.IsolatedAsyncioTestCase):
         self.database.initialize()
         self.alice = self.database.create_user("Alice", "password123")
 
+    def test_platform_flow_without_player_view_prompt(self) -> None:
+        """Register, import, create, join and close through the production factory."""
+        manager = RoomManager(self.database, self.games_dir, self.templates_dir)
+        static = self.root / "static"
+        static.mkdir()
+        (static / "index.html").write_text("web", encoding="utf-8")
+        app = create_platform_app(self.database, static, room_manager=manager)
+        with mock.patch.object(factory_module, "load_settings", return_value=fake_settings()):
+            with TestClient(app) as client:
+                registered = client.post(
+                    "/api/register", json={"username": "Bob", "password": "password123"}
+                )
+                self.assertEqual(registered.status_code, 201, registered.text)
+                template = import_template(
+                    self.database, Path("templates/default"), self.templates_dir,
+                    registered.json()["id"], "Prompt-free Story",
+                )
+                self.assertFalse(
+                    (self.templates_dir / template.id / "prompts" / "player_view.md").exists()
+                )
+                created = client.post(
+                    "/api/rooms", json={
+                        "source": "template", "template_id": template.id,
+                        "game_name": "Bob Save", "password": "",
+                    },
+                )
+                self.assertEqual(created.status_code, 201, created.text)
+                code = created.json()["code"]
+                with client.websocket_connect(f"/ws?room={code}") as websocket:
+                    websocket.send_json({"type": "join", "password": ""})
+                    self.assertEqual(websocket.receive_json()["type"], "joined")
+                closed = client.delete(f"/api/rooms/{code}")
+                self.assertEqual(closed.status_code, 200, closed.text)
+                self.assertIsNone(manager.get_runtime(code))
+
     async def test_load_game_server_applies_deployment_role_limits(self) -> None:
         game_path = self.games_dir / "game_ONE"
         game_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(Path("templates/default"), game_path)
+        self.assertFalse((game_path / "prompts" / "player_view.md").exists())
 
         server = await load_game_server(game_path, 7, fake_settings())
         self.assertEqual(server.role_ids, ("P1", "P2"))
@@ -79,6 +117,24 @@ class GameFactoryTests(unittest.IsolatedAsyncioTestCase):
                 game_path, 7, fake_settings(min_role_count=3, max_role_count=4)
             )
 
+    async def test_three_and_four_role_rooms_load_new_payloads(self) -> None:
+        shutil.copytree("templates/default", self.templates_dir / "default")
+        manager = RoomManager(self.database, self.games_dir, self.templates_dir)
+        with mock.patch.object(factory_module, "load_settings", return_value=fake_settings()):
+            for count in (3, 4):
+                template = create_template_from_scaffold(
+                    self.database, self.templates_dir, self.alice.id,
+                    f"Story {count}", count, 2, 4,
+                )
+                room = await manager.create_room_from_template(
+                    self.alice, template.id, f"Save {count}"
+                )
+                self.assertEqual(
+                    room.game_server.role_ids,
+                    tuple(f"P{index}" for index in range(1, count + 1)),
+                )
+                await manager.close_room(room.code, self.alice.id)
+
     def test_room_creation_through_http_uses_the_default_factory(self) -> None:
         template = import_template(
             self.database, Path("templates/default"), self.templates_dir,
@@ -88,6 +144,7 @@ class GameFactoryTests(unittest.IsolatedAsyncioTestCase):
             self.database, template.id, self.alice.id, "Alice Save",
             self.templates_dir, self.games_dir,
         )
+        self.assertFalse((self.games_dir / game.id / "prompts" / "player_view.md").exists())
         # No game_factory argument: RoomManager must use load_game_server.
         manager = RoomManager(self.database, self.games_dir, self.templates_dir)
         static = self.root / "static"

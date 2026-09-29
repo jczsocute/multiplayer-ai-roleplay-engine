@@ -1,17 +1,23 @@
 # TODO
 
-## Next
+## Completed
 
 ### Template Library v0.1
 
-为现有 Template catalog 增加轻量导入与浏览体验；继续保持 Template payload 在
-文件系统、catalog metadata 在 platform.db。当前 Lobby 已可浏览、创建、复制、重命名、
-删除自己的 Template，详情页也已经显示 introduction / tags，但还没有 Web 端的内容编辑，
-也还不能在 Web 上改 introduction / tags。
+- Lobby 可浏览公开剧本；用户可创建、复制、重命名、公开或删除自己的剧本。
+- 基础 Web Editor 可编辑标题、简介、标签、世界文字、角色人设、开场白和 AI 写作要求，并增减末尾角色。
+- 用户可上传 ZIP 新建剧本，也可下载或替换自己剧本的完整 payload；上传有大小、路径和格式校验。
+- 高级 schema 与 prompt 的在线编辑仍列于 Deferred。
 
-Status: `Next`
+Status: `Completed`
 
-## Completed
+### Modular Template payload
+
+- 当前唯一格式使用 `metadata.json`、World schema/initial、编号 `characters/1..N/`，以及每个角色的 view schema、可选 status schema/initial 和 opening。
+- `*_schema.json` 是给 LLM 的字段示例与说明，不是标准 JSON Schema；`server/gameserver/template.py` 校验目录与初始数据。
+- WorldUpdater 动态组装 `world_state`、`character_views`、可选 `character_status`；Narrator 只读取角色可见信息、可选状态与近期剧情。
+
+Status: `Completed`
 
 ### Payload migration: roles.json → metadata.json + title / introduction / tags
 
@@ -22,6 +28,7 @@ Status: `Next`
 - 已登记的 Template / Game 在 Platform 启动时幂等迁移（`catalog.migrate_catalog_payloads`）；
   import 先复制源目录，只在副本中迁移；legacy `--game` 只迁移显式指定的目录；未登记目录不扫描。
 - 迁移写 `metadata.json.tmp` + `os.replace` 后才删除 `roles.json`；失败保留旧文件。
+- 只迁移 metadata；更早的 `players/`、`statusbar/` 等内容布局需手动改成当前格式。
 - `GET /api/templates/<id>` 详情接口提供 introduction / tags / role_names（私有仅 owner 可见）；
   Template Detail overlay 显示 tags chips、剧本介绍（`pre-wrap` 纯文本）与角色列表。
 - `templates/default` 已是 `metadata.json`；`love_story` / `three_player_test` 的
@@ -69,10 +76,16 @@ Status: `Completed`
 
 ## Deferred
 
-### Template Web Editor
+### Large history exports
 
-「我的剧本 → 编辑」目前只提示 `TODO：剧本在线编辑功能尚未完成`。本轮不实现在线编辑器，
-也不因为按钮存在就提前实现；等 Template metadata.json 确定后再设计表单与校验。
+当前历史 ZIP 会在内存中组装完整文件，适合目前的单机规模；很长的存档可能带来较高瞬时内存占用。若后续出现实际大存档，再评估流式生成或导出大小上限。
+
+Status: `Deferred`
+
+### Advanced Template Editor
+
+基础 Web Editor 已可编辑标题、简介、标签、世界、人设、开场和 AI 写作要求。
+高级 schema 与 WorldUpdater/Narrator prompt 编辑仍未实现，基础保存会保留这些文件。
 
 Status: `Deferred`
 

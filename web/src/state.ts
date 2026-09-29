@@ -20,6 +20,7 @@ export type ClientState = {
   roomKey: string;
   roomKeyRequired: boolean;
   allowRegistration: boolean;
+  roomDisconnectTimeoutSeconds: number;
   resumeToken: string;
   roles: RoleDefinition[];
   role: Role | null;
@@ -32,6 +33,7 @@ export type ClientState = {
   processingStage: string | null;
   opening: string;
   storyEntries: StoryEntry[];
+  characterStatus: unknown | null;
   actionDraft: string;
   chatDraft: string;
   roomMessages: RoomMessage[];
@@ -44,9 +46,11 @@ export type ClientState = {
 export const initialState: ClientState = {
   authChecked: false, authUser: null, isHost: false,
   connection: "DISCONNECTED", roomKey: "", roomKeyRequired: true, allowRegistration: true,
+  roomDisconnectTimeoutSeconds: 60,
   resumeToken: "", roles: [], role: null, viewRole: null, characterName: "", scenario: "",
   presence: [], players: {}, round: null, processingStage: null, opening: "",
-  storyEntries: [], actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
+  storyEntries: [], characterStatus: null,
+  actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
   chatUnread: 0, errors: [], notices: [],
 };
 
@@ -57,7 +61,7 @@ export type ClientAction =
   | { type: "connection"; status: ConnectionStatus; detail?: string }
   | { type: "room_key"; roomKey: string }
   | { type: "session"; roomKey: string; resumeToken: string }
-  | { type: "ui_config"; roomKeyRequired: boolean; allowRegistration: boolean }
+  | { type: "ui_config"; roomKeyRequired: boolean; allowRegistration: boolean; roomDisconnectTimeoutSeconds?: number }
   | { type: "action_draft"; text: string }
   | { type: "chat_draft"; text: string }
   | { type: "mobile_tab"; tab: MobileTab }
@@ -89,6 +93,7 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
       ...state,
       roomKeyRequired: action.roomKeyRequired,
       allowRegistration: action.allowRegistration,
+      roomDisconnectTimeoutSeconds: action.roomDisconnectTimeoutSeconds ?? state.roomDisconnectTimeoutSeconds,
     };
   }
   if (action.type === "action_draft") return { ...state, actionDraft: action.text };
@@ -124,15 +129,18 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
       return { ...state, role: message.role, viewRole: message.view_role,
         opening: message.reset ? "" : state.opening,
         storyEntries: message.reset ? [] : state.storyEntries,
+        characterStatus: message.reset ? null : state.characterStatus,
         actionDraft: message.role ? state.actionDraft : "" };
     case "role_view":
       return { ...state, viewRole: message.role, characterName: message.character_name,
         opening: message.opening, storyEntries: message.history,
+        characterStatus: message.character_status,
         actionDraft: state.role === message.role && message.draft !== undefined
           ? message.draft : state.actionDraft };
     case "role_round":
       if (message.role !== state.viewRole) return state;
-      return { ...state, storyEntries: [...state.storyEntries, ...message.entries] };
+      return { ...state, storyEntries: [...state.storyEntries, ...message.entries],
+        characterStatus: message.character_status };
     case "room_message":
       return { ...state, roomMessages: [...state.roomMessages, message],
         chatUnread: state.mobileTab === "chat" ? 0 : state.chatUnread + 1 };

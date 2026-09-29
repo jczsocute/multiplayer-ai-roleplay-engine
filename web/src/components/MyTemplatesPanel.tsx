@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   copyConfirmation, deleteConfirmation, formatLocalTime, newTemplatePayload,
-  renamePrompt, sortedByUpdated, templateEditorMessage, templateMeta, toggledRow,
+  renamePrompt, sortedByUpdated, templateMeta, toggledRow,
   visibilityToggleLabel,
 } from "../lobby";
 import type { TemplateItem } from "../types";
@@ -13,6 +13,9 @@ type Props = {
   error: string;
   onUse: (template: TemplateItem) => void;
   onDetail: (template: TemplateItem) => void;
+  onEdit: (template: TemplateItem) => void;
+  onImportZip: (file: File) => void;
+  onExportZip: (template: TemplateItem) => void;
   onRename: (template: TemplateItem, name: string) => void;
   onToggleVisibility: (template: TemplateItem, isPublic: boolean) => void;
   onCopy: (template: TemplateItem) => void;
@@ -20,11 +23,13 @@ type Props = {
   onCreate: (name: string, roleCount: number) => void;
 };
 
-/** 我的剧本: create + per-row management. No online editor this round. */
+/** 我的剧本: create + per-row management. */
 export function MyTemplatesPanel({
   templates, roleCounts, busy, error,
-  onUse, onDetail, onRename, onCopy, onDelete, onCreate, onToggleVisibility,
+  onUse, onDetail, onEdit, onImportZip, onExportZip,
+  onRename, onCopy, onDelete, onCreate, onToggleVisibility,
 }: Props) {
+  const uploadInput = useRef<HTMLInputElement>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -43,9 +48,17 @@ export function MyTemplatesPanel({
       <button className="secondary compact-button" onClick={() => setCreating(!creating)}>
         {creating ? "收起" : "新建"}
       </button>
+      <button className="secondary compact-button" disabled={busy}
+        onClick={() => uploadInput.current?.click()}>上传zip新建</button>
+      <input ref={uploadInput} type="file" accept=".zip,application/zip" hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onImportZip(file);
+          event.target.value = "";
+        }} />
     </div>
 
-    {creating && <form className="panel-form" onSubmit={(event) => {
+    {creating && <form className="panel-form template-create-form" onSubmit={(event) => {
       event.preventDefault();
       const payload = newTemplatePayload(name, roleCount);
       if (!payload.name) return;
@@ -80,9 +93,10 @@ export function MyTemplatesPanel({
       {openId === template.id && <div className="row-actions">
         <button onClick={() => onUse(template)}>使用</button>
         <button className="secondary" onClick={() => onDetail(template)}>详情</button>
-        <button className="secondary" onClick={() => window.alert(templateEditorMessage())}>
+        <button className="secondary" onClick={() => onEdit(template)}>
           编辑
         </button>
+        <button className="secondary" onClick={() => onExportZip(template)}>导出zip</button>
         <button className="secondary" disabled={busy}
           onClick={() => onToggleVisibility(template, !template.is_public)}>
           {visibilityToggleLabel(template)}

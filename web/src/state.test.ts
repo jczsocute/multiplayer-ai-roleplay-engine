@@ -9,23 +9,26 @@ describe("protocol reducer", () => {
     }});
     const viewed = reducer(withChat, { type: "server", message: {
       type: "role_view", role: "P1", character_name: "林岚", reset: true,
-      opening: "P1 opening", history: [{ kind: "action", content: "open" }], statusbar: { hp: 10 },
+      opening: "P1 opening", history: [{ kind: "action", content: "open" }],
+      character_status: { hp: 10 },
     }});
     expect(viewed.storyEntries).toHaveLength(1);
     expect(viewed.opening).toBe("P1 opening");
+    expect(viewed.characterStatus).toEqual({ hp: 10 });
     expect(viewed.roomMessages).toHaveLength(1);
 
     const switched = reducer(viewed, { type: "server", message: {
       type: "role_view", role: "P2", character_name: "周砚", reset: true,
-      opening: "P2 opening", history: [], statusbar: {},
+      opening: "P2 opening", history: [], character_status: null,
     }});
     expect(switched.opening).toBe("P2 opening");
+    expect(switched.characterStatus).toBeNull();
   });
 
   it("never adopts a spectator view as a private draft", () => {
     const spectator = reducer(initialState, { type: "server", message: {
       type: "role_view", role: "P1", character_name: "林岚", reset: true,
-      opening: "opening", history: [], statusbar: {}, draft: "should be ignored",
+      opening: "opening", history: [], character_status: null, draft: "should be ignored",
     }});
     expect(spectator.actionDraft).toBe("");
   });
@@ -112,9 +115,11 @@ describe("protocol reducer", () => {
   });
 
   it("ui_config can disable the room key field and registration", () => {
-    const configured = reducer(initialState, { type: "ui_config", roomKeyRequired: false, allowRegistration: false });
+    const configured = reducer(initialState, { type: "ui_config", roomKeyRequired: false, allowRegistration: false,
+      roomDisconnectTimeoutSeconds: 300 });
     expect(configured.roomKeyRequired).toBe(false);
     expect(configured.allowRegistration).toBe(false);
+    expect(configured.roomDisconnectTimeoutSeconds).toBe(300);
     expect(reducer(initialState, { type: "ui_config", roomKeyRequired: true, allowRegistration: true }).roomKeyRequired).toBe(true);
   });
 });

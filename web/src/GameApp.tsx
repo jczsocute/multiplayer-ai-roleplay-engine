@@ -6,6 +6,7 @@ import { humanizeError } from "./errors";
 import { PROTOCOL_VERSION, type AuthUser, type ClientMessage } from "./protocol";
 import { initialState, reducer, type ClientState } from "./state";
 import { openGameSocket, sendMessage } from "./websocket";
+import { downloadGameHistory } from "./gameHistory";
 
 const SESSION_KEY = "rp.session";
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
@@ -223,7 +224,7 @@ export default function GameApp({
   useEffect(() => {
     fetch("/ui-config.json")
       .then((response) => response.json())
-      .then((config: { font_scale?: number; room_key_required?: boolean; allow_registration?: boolean }) => {
+      .then((config: { font_scale?: number; room_key_required?: boolean; allow_registration?: boolean; room_disconnect_timeout_seconds?: number }) => {
         if (typeof config.font_scale === "number") {
           document.documentElement.style.setProperty("--font-scale", String(config.font_scale));
         }
@@ -231,6 +232,9 @@ export default function GameApp({
           type: "ui_config",
           roomKeyRequired: config.room_key_required !== false,
           allowRegistration: config.allow_registration !== false,
+          roomDisconnectTimeoutSeconds: typeof config.room_disconnect_timeout_seconds === "number"
+            && config.room_disconnect_timeout_seconds > 0
+            ? config.room_disconnect_timeout_seconds : undefined,
         });
       })
       .catch(() => undefined);
@@ -331,5 +335,7 @@ export default function GameApp({
   return <GameScreen state={state} send={send} setAction={(text) => dispatch({ type: "action_draft", text })}
     setChat={(text) => dispatch({ type: "chat_draft", text })} sendChat={sendChat} leave={logout}
     closeRoom={state.isHost ? () => void closePlatformRoom?.() : undefined}
+    exportHistory={platformRoom && state.isHost
+      ? () => downloadGameHistory("room", platformRoom.code) : undefined}
     setTab={(tab) => dispatch({ type: "mobile_tab", tab })} />;
 }

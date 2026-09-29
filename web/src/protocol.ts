@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 export const MAX_USERNAME_LENGTH = 32;
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_ROOM_CHAT_LENGTH = 4000;
@@ -19,7 +19,7 @@ export type ProcessingStage =
 
 export type StoryEntry = {
   round?: number;
-  kind: "action" | "narration" | "statusbar";
+  kind: "action" | "narration" | "character_status";
   content: unknown;
 };
 
@@ -64,12 +64,11 @@ export type RoleViewMessage = {
   character_name: string;
   opening: string;
   history: StoryEntry[];
-  statusbar: unknown;
+  character_status: unknown | null;
   reset: boolean;
-  current_view?: unknown;
   draft?: string;
 };
-export type RoleRoundMessage = { type: "role_round"; role: Role; round: number; entries: StoryEntry[]; statusbar: unknown };
+export type RoleRoundMessage = { type: "role_round"; role: Role; round: number; entries: StoryEntry[]; character_status: unknown | null };
 export type RoomMessage = {
   type: "room_message";
   kind: "system" | "host" | "player" | "spectator";
@@ -88,8 +87,7 @@ export type StatusMessage = {
   stage: ProcessingStage;
   players: Record<Role, PlayerState>;
   draft: string;
-  statusbar: unknown;
-  current_view?: unknown;
+  character_status: unknown | null;
 };
 export type RoundCompleteMessage = { type: "round_complete"; round: number };
 export type SessionReplacedMessage = { type: "session_replaced"; detail: string };

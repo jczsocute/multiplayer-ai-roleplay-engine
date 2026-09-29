@@ -103,7 +103,7 @@ class PlatformDisconnectTests(unittest.TestCase):
             game_db = Database(path / "game.db")
             await game_db.initialize()
             return GameServer(
-                game_db, None, None, None, room_key="", owner_user_id=owner
+                game_db, None, None, room_key="", owner_user_id=owner
             )
 
         self.manager = RoomManager(

@@ -29,15 +29,18 @@ export type HostControlsProps = {
   roles: RoleDefinition[];
   users: RoomMember[];
   closeRoom?: () => void;
+  exportHistory?: () => Promise<string | null>;
 };
 
 /** The dialog body: no portal and no toggle button, so it renders anywhere. */
 export function HostControlsDialog({
-  connection, processingStage, round, ownerUserId, roles, users, send, onClose,
+  connection, processingStage, round, ownerUserId, roles, users, send, exportHistory, onClose,
 }: HostControlsProps & { onClose: () => void }) {
   const [confirming, setConfirming] = useState<"retry" | "rollback" | null>(null);
   const [target, setTarget] = useState(() => rollbackRoundInput(round));
   const [assignments, setAssignments] = useState<Record<string, number>>({});
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   const disabled = hostControlsDisabled({ connection, processingStage });
   const canKick = connection === "CONNECTED";
@@ -175,6 +178,24 @@ export function HostControlsDialog({
             </div>
           )}
         </section>
+
+        {exportHistory && <section className="host-section">
+          <h3>历史记录</h3>
+          <div className="host-row">
+            <button className="secondary" disabled={disabled || exporting}
+              onClick={async () => {
+                setExporting(true); setExportError("");
+                try {
+                  const error = await exportHistory();
+                  if (error) setExportError(error);
+                } finally { setExporting(false); }
+              }}>
+              {exporting ? "导出中…" : "导出历史记录"}
+            </button>
+          </div>
+          {processingStage !== null && <p className="muted">请等待本轮完成……</p>}
+          {exportError && <p className="error-text" role="alert">{exportError}</p>}
+        </section>}
 
       </section>
     </div>

@@ -38,10 +38,14 @@ type Props = {
   onRenameGame: (game: GameItem, name: string) => Promise<void>;
   onCopyGame: (game: GameItem) => Promise<void>;
   onDeleteGame: (game: GameItem) => Promise<void>;
+  onExportGameHistory: (game: GameItem) => Promise<void>;
   onCreateTemplate: (name: string, roleCount: number) => Promise<void>;
   onRenameTemplate: (template: TemplateItem, name: string) => Promise<void>;
   onToggleTemplateVisibility: (template: TemplateItem, isPublic: boolean) => Promise<void>;
   onLoadTemplateDetail: (template: TemplateItem) => Promise<TemplateItem | null>;
+  onEditTemplate: (template: TemplateItem) => void;
+  onImportTemplateZip: (file: File) => void;
+  onExportTemplateZip: (template: TemplateItem) => void;
   onCopyTemplate: (template: TemplateItem) => Promise<void>;
   onDeleteTemplate: (template: TemplateItem) => Promise<void>;
 };
@@ -201,6 +205,7 @@ export function PlatformHome(props: Props) {
         onLoad={(game) => { close(); openCreate({ source: "game", id: game.id }); }}
         onRename={(game, name) => void props.onRenameGame(game, name)}
         onCopy={(game) => void props.onCopyGame(game)}
+        onExportHistory={(game) => void props.onExportGameHistory(game)}
         onDelete={(game) => void props.onDeleteGame(game)} />
     </OverlayPanel>}
 
@@ -214,6 +219,9 @@ export function PlatformHome(props: Props) {
         onCopy={(template) => void props.onCopyTemplate(template)}
         onDelete={(template) => void props.onDeleteTemplate(template)}
         onDetail={(template) => void openDetail(template)}
+        onEdit={props.onEditTemplate}
+        onImportZip={props.onImportTemplateZip}
+        onExportZip={props.onExportTemplateZip}
         onUse={(template) => { close(); openCreate({
           source: "template", id: template.id, name: `${template.name} - Game`,
         }); }} />

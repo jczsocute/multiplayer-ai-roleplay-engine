@@ -5,12 +5,12 @@
 ## 负责范围
 
 - `game_server.py`：单局命令处理、角色分配、广播、AI 回合、retry/rollback、recovery。
-- `database.py`：单局 `game.db`；保存 world、round、actions、views、statusbars、narrations 和 player state。
+- `database.py`：单局 `game.db`；保存 world、round、actions、character views、可选 character status、narrations 和 player state。
 - `round_manager.py`：动态角色的同步回合状态机。
 - `session.py`：本局在线参与者、角色/view、resume 与 grace period。
 - `protocol.py`：单局 WebSocket 协议与输入上限。
 - `roles.py`：读取 payload 的 `metadata.json`，生成稳定角色 ID `P1..PN`；并提供 `metadata.json` 的校验、写入与一次性 `roles.json` 迁移。
-- `llm/`：WorldUpdater、PlayerViewGenerator、Narrator、PromptLoader 和直接 LLM client。
+- `llm/`：WorldUpdater、Narrator、PromptLoader 和直接 LLM client。
 - `factory.py`：Platform 用 Game payload 和 Platform owner 构造一个独立 Runtime。
 - `runtime.py`：显式 legacy 单局启动器；正常平台启动不会调用它。
 
@@ -42,12 +42,17 @@ Platform Web 配置。
 
 ```text
 metadata.json
-world/initial_state.json
-characters/player_N.md
-characters/opening/player_N.md
-characters/statusbar/player_N.json
-prompts/
-schemas/world_updater_output.json
+world/world.md
+world/world_state_schema.json
+world/world_state_initial.json
+characters/N/character.md
+characters/N/character_view_schema.json
+characters/N/character_status_schema.json   # 可选
+characters/N/character_status_initial.json  # 启用 status 时必需
+characters/N/opening.md
+prompts/ai_guidelines.md
+prompts/world_update.md
+prompts/narration.md
 ```
 
 `metadata.json` 示例：
@@ -56,33 +61,39 @@ schemas/world_updater_output.json
 {"count": 3, "names": ["角色1", "角色2", "角色3"], "title": "气象站的雷雨夜", "introduction": "三人合作短剧本", "tags": ["三人", "合作"]}
 ```
 
-显示名称不是主键；运行时始终使用 `P1..PN`。Opening 是静态展示内容，不是 Round，不进入 SQLite、world state 或 AI history。
+目录 `characters/1..N` 分别映射运行时 `P1..PN`。显示名称不是主键。Opening 是静态展示内容，不是 Round，不进入 SQLite、world state 或 AI history。
 
 `title` 是剧本自己的显示标题，Platform 的 catalog 名称是镜像；
 `introduction` 与 `tags` 属于 payload，不写入平台数据库。
 旧 `roles.json` 只供一次性迁移，新的剧本和存档都使用 `metadata.json`。
+该迁移只处理角色 metadata；旧的 `players/`、`statusbar/` 等内容目录不会自动转换，须先按上述当前布局调整。
+
+`*_schema.json` 是给 LLM 的字段示例与说明，不是标准 JSON Schema；初始 JSON 的对象键结构必须与对应 schema 一致。`server/gameserver/template.py` 集中校验目录、必需文件与 JSON。
 
 Game payload 是 Template 的完整文件快照，保存在 `games/game_*/`。单局运行时只读取 Game 自己的文件，不回读来源 Template。
 
 ## 回合与 AI pipeline
 
-当前单局协议版本为 `6`。Platform 层只消费首个消息中的 Room Password 并选择
+当前单局协议版本为 `7`。Platform 层只消费首个消息中的 Room Password 并选择
 Runtime，之后继续使用同一套 GameServer 消息；平台资源 API 不进入游戏协议。
 
 所有角色 READY 后进入 PROCESSING：
 
-1. WorldUpdater 接收全部 actions，一次生成新 canonical world、public information、全部 views/statusbars。
-2. Narrator 为各角色并行生成叙事，只读取 public information、自己的 view/statusbar、角色设定与有限历史。
+1. WorldUpdater 接收全部 actions，按 World 与各角色的 schema 动态组装输出示例，一次生成新 canonical `world_state`、全部 `character_views` 和启用状态栏角色的 `character_status`。对象键结构不匹配时按 AI 失败处理并由房主完整重试。
+2. Narrator 为各角色并行生成叙事，只读取自己的 character view、可选 status、角色设定与有限历史。
 3. 结果写入 `game.db`，广播各自的 `role_round`，进入下一轮。
 
-`PlayerViewGenerator` 保留为接口，但正常流程直接使用 WorldUpdater 返回的 views。
+角色视角只由 WorldUpdater 生成，随世界更新一起写入 `game.db`，供 Narrator 使用；玩家故事界面和 GameServer 的玩家消息不发送或渲染这份内部数据。可选角色状态栏仍是玩家可见内容。Game 加载不需要单独的视角生成提示文件。
 
 玩家状态为 `EDITING → READY → PROCESSING`，`PAUSED` 是旁支状态。
 持久化回合 stage 为 `WAITING_INPUT → WORLD_UPDATING → WORLD_DONE →
-VIEW_GENERATING → VIEW_DONE → NARRATION_GENERATING → FINISHED`；stage 用于
+NARRATION_GENERATING → FINISHED`；旧存档可能保留 `VIEW_GENERATING` / `VIEW_DONE`，恢复时完整重跑该回合。stage 用于
 观察执行状态，不是恢复检查点。`game.db` 保存 `world_state`、`rounds`、
-`round_actions`、`chat_messages`、`player_views`、`public_world_info`、
-`player_statusbars` 与 `players`。WorldUpdater 结果与 `WORLD_DONE` 原子提交。
+`round_actions`、`chat_messages`、`character_views`、`character_statuses` 与 `players`。新数据库不创建 `public_world_info`；旧库中的历史表仅在 retry/rollback 删除旧轮时清理。WorldUpdater 结果与 `WORLD_DONE` 原子提交。
+
+`Database.export_history()` 在同一 SQLite 读取快照中整理初始/当前世界和已完成回合。
+Platform 为存档 owner 打包 JSON ZIP；处理中不导出，回滚后已物理删除的回合不再出现。
+实时 `role_round.entries` 与刷新后读取的历史条目都携带 `round`。
 
 Story Plane 持久化并可进入 AI context；Room Chat / presence / notice 仅在内存广播，不进入单局故事历史。角色 Opening 同样不进入 AI context。
 Room Chat 不获取 Story 命令锁，所以 AI 生成期间仍可交流。显示历史完整保留；
@@ -93,7 +104,7 @@ Narrator 只取最近 `NARRATOR_HISTORY_ROUNDS` 个完整回合，默认 20。
 - `/retry` 保留原 actions，从前一轮结果重新运行完整 WorldUpdater + Narrators，并覆盖目标轮输出。
 - `/rollback N` 物理删除 N 之后的回合数据，恢复 Round N 的 world，并从 N+1 的 EDITING 状态继续。
 - 未完成且非 `WAITING_INPUT` 的 round 在恢复时完整重跑，不从中间 stage 部分续跑。
-- WorldUpdater、PlayerViewGenerator 或 Narrator 任一步失败，都保留本回合原 actions
+- WorldUpdater 或 Narrator 任一步失败，都保留本回合原 actions
   和 PROCESSING 状态。房主明确 retry 时从基础 world 完整重跑；玩家不能在失败后
   修改行动重新提交。没有无限自动重试，也不保证请求级 exactly-once。
 - 时间线始终是单一线性历史，不使用 revision/branch/event sourcing。

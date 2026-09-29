@@ -12,9 +12,8 @@ from server.gameserver.models import CompletedRound, PlayerStatus, RoundStage
 INITIAL_WORLD = "# Initial world"
 WORLD_RESULT = {
     "world_state": {"gate": "open"},
-    "public_information": {"time": "noon"},
-    "player_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
-    "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 100}},
+    "character_views": {"P1": {"gate": "visible"}, "P2": {"road": "visible"}},
+    "character_status": {"P1": {"hp": 100}, "P2": {"hp": 100}},
 }
 
 
@@ -27,15 +26,6 @@ class MockWorldUpdater:
         return WORLD_RESULT
 
 
-class MockPlayerViews:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def generate(self, player_id: str, world_state: str) -> str:
-        self.calls.append((player_id, world_state))
-        return f"Recovered {player_id} view."
-
-
 class MockNarrator:
     def __init__(self) -> None:
         self.calls = []
@@ -43,9 +33,8 @@ class MockNarrator:
     async def narrate(
         self,
         player_id: str,
-        public_world_info: str,
-        player_view: str,
-        player_statusbar: dict,
+        character_view: str,
+        character_status: dict,
         chat_history: list,
     ) -> dict:
         self.calls.append(player_id)
@@ -71,7 +60,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
                 return WORLD_RESULT
 
         updater = FailOnce()
-        game = GameServer(database, updater, MockPlayerViews(), MockNarrator(), 1)
+        game = GameServer(database, updater, MockNarrator(), 1)
         game.rounds.begin_reprocess(completed)
         await game._process_round(completed)
         failed = await database.get_recovery_data(1)
@@ -93,10 +82,9 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         completed = CompletedRound(1, {"P1": "open", "P2": "watch"})
         await database.save_world_update(completed, WORLD_RESULT)
         updater = MockWorldUpdater()
-        views = MockPlayerViews()
         narrator = MockNarrator()
-        game = GameServer(database, updater, views, narrator, 1)
-        return directory, database, completed, updater, views, narrator, game
+        game = GameServer(database, updater, narrator, 1)
+        return directory, database, completed, updater, narrator, game
 
     async def test_save_world_update_commits_result_and_world_done_together(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -117,7 +105,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(result), WORLD_RESULT["world_state"])
 
     async def test_world_done_reruns_the_whole_round(self) -> None:
-        directory, database, _, updater, views, narrator, game = await self.make_game()
+        directory, database, _, updater, narrator, game = await self.make_game()
         self.addCleanup(directory.cleanup)
         await database.set_round_stage(1, RoundStage.WORLD_DONE)
 
@@ -128,7 +116,6 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [call["current_world_state"] for call in updater.calls], [INITIAL_WORLD]
         )
-        self.assertEqual(views.calls, [])
         self.assertEqual(narrator.calls, ["P1", "P2"])
         self.assertEqual(game.rounds.round_number, 2)
         with sqlite3.connect(database.path) as connection:
@@ -146,7 +133,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         await database.save_player("P2", PlayerStatus.EDITING, "watch")
         await database.set_round_stage(1, RoundStage.WORLD_UPDATING)
         updater = MockWorldUpdater()
-        game = GameServer(database, updater, MockPlayerViews(), MockNarrator(), 1)
+        game = GameServer(database, updater, MockNarrator(), 1)
 
         await game.recover_round()
 
@@ -156,29 +143,28 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(game.rounds.round_number, 2)
 
     async def test_view_generating_no_longer_only_fills_gaps(self) -> None:
-        directory, database, _, updater, views, narrator, game = await self.make_game()
+        directory, database, _, updater, narrator, game = await self.make_game()
         self.addCleanup(directory.cleanup)
         with sqlite3.connect(database.path) as connection:
-            connection.execute("DELETE FROM player_views WHERE round_id = 1 AND player_id = 'P2'")
+            connection.execute("DELETE FROM character_views WHERE round_id = 1 AND player_id = 'P2'")
         await database.set_round_stage(1, RoundStage.VIEW_GENERATING)
 
         await game.recover_round()
 
-        # PlayerViewGenerator is not a recovery fallback any more: the round is re-run.
+        # Legacy view-generation stages recover by rerunning the whole round.
         self.assertEqual(len(updater.calls), 1)
-        self.assertEqual(views.calls, [])
         self.assertEqual(narrator.calls, ["P1", "P2"])
         self.assertEqual(game.rounds.round_number, 2)
         with sqlite3.connect(database.path) as connection:
             self.assertEqual(
                 connection.execute(
-                    "SELECT COUNT(*) FROM player_views WHERE round_id = 1"
+                    "SELECT COUNT(*) FROM character_views WHERE round_id = 1"
                 ).fetchone()[0],
                 2,
             )
 
     async def test_narration_generating_regenerates_all_narrations(self) -> None:
-        directory, database, completed, updater, views, narrator, game = await self.make_game()
+        directory, database, completed, updater, narrator, game = await self.make_game()
         self.addCleanup(directory.cleanup)
         await database.save_narrations(
             completed.round_number,
@@ -190,7 +176,6 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         # The successful P1 narration is not preserved: everything is regenerated.
         self.assertEqual(len(updater.calls), 1)
-        self.assertEqual(views.calls, [])
         self.assertEqual(narrator.calls, ["P1", "P2"])
         self.assertEqual(game.rounds.round_number, 2)
         with sqlite3.connect(database.path) as connection:
@@ -208,7 +193,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         await database.save_player("P1", PlayerStatus.READY, "open")
         updater = MockWorldUpdater()
         narrator = MockNarrator()
-        game = GameServer(database, updater, MockPlayerViews(), narrator, 1)
+        game = GameServer(database, updater, narrator, 1)
 
         await game.recover_round()
 
@@ -228,7 +213,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         await database.save_player("P2", PlayerStatus.PROCESSING, "watch")
         updater = MockWorldUpdater()
         narrator = MockNarrator()
-        game = GameServer(database, updater, MockPlayerViews(), narrator, 1)
+        game = GameServer(database, updater, narrator, 1)
 
         await game.recover_round()
 

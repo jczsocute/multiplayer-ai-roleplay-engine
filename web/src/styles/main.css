@@ -28,7 +28,7 @@ html, body, #root { height: 100%; }
 body { margin: 0; min-width: 0; }
 button, input, textarea, select { font: inherit; }
 button {
-  min-height: 34px; border: 0; border-radius: 8px; padding: .35rem .7rem;
+  min-height: 26px; border: 0; border-radius: 7px; padding: .14rem .55rem;
   color: #ece8f7; background: var(--accent); cursor: pointer;
 }
 button:disabled { opacity: .45; cursor: default; }
@@ -36,10 +36,11 @@ button.secondary { background: #2a2640; }
 button.danger { color: var(--danger); border-color: #6b3540; background: #301a20; }
 button.active { background: var(--accent-2); }
 textarea, input, select {
-  width: 100%; border: 1px solid #3a3457; border-radius: 8px; padding: .5rem .6rem;
+  width: 100%; border: 1px solid #3a3457; border-radius: 7px; padding: .22rem .5rem;
   color: var(--text); background: var(--surface); font-size: 1rem;
 }
-textarea { resize: vertical; line-height: 1.55; }
+input:not([type="radio"]):not([type="checkbox"]):not([type="file"]), select { min-height: 26px; }
+textarea { resize: vertical; line-height: 1.55; padding: .5rem .6rem; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: .2rem; font-size: 1.15rem; }
 h2 { margin-bottom: .35rem; font-size: .95rem; }
@@ -88,7 +89,7 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .lobby-quick { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .1rem; }
 .lobby-quick button {
   flex: 1 1 0; min-width: 6.5rem; white-space: nowrap;
-  min-height: 30px; padding: .28rem .65rem; font-size: .8rem; background: var(--accent);
+  min-height: 26px; padding: .14rem .55rem; font-size: .8rem; background: var(--accent);
 }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .panel-head h2 { margin: 0; }
@@ -118,6 +119,7 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .panel-form label { display: flex; align-items: center; gap: .4rem; }
 .radio-row { display: flex; align-items: center; gap: .4rem; color: var(--text-muted); }
 .panel-form input[type="radio"] { width: auto; }
+.template-create-form select { width: 5rem; max-width: 100%; }
 .panel-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
 /* Resource panels scroll inside a fixed maximum height. */
 .overlay-body { max-height: min(62dvh, 34rem); overflow-y: auto; }
@@ -265,7 +267,7 @@ dl.status-tree > div {
 .chat-compose textarea { min-height: 44px; max-height: 120px; }
 
 .error-banner, .disconnect-banner { flex: none; padding: .5rem .6rem; border: 1px solid #6b2f3b; border-radius: 8px; background: #30181f; font-size: .8rem; }
-.disconnect-banner button { margin-left: .5rem; min-height: 30px; padding: .25rem .6rem; }
+.disconnect-banner button { margin-left: .5rem; min-height: 26px; padding: .14rem .55rem; }
 
 /* Desktop: two columns */
 @media (min-width: 760px) {
@@ -290,7 +292,7 @@ dl.status-tree > div {
 
 /* Owner host controls: centered modal with small, compact controls */
 .header-actions { display: flex; align-items: center; gap: .4rem; flex: none; }
-.header-button { min-height: 30px; padding: .28rem .65rem; font-size: .8rem; }
+.header-button { min-height: 26px; padding: .14rem .55rem; font-size: .8rem; }
 .host-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: grid; place-items: center; padding: 1rem;
@@ -354,3 +356,14 @@ dl.status-tree > div {
 .detail-text { margin: 0; font-size: .85rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-roles { display: grid; gap: .2rem; margin: 0; padding: 0; list-style: none; font-size: .85rem; }
 .detail-roles .role-id { color: var(--text-muted); font-size: .78rem; }
+.template-editor-shell { max-width: 980px; }
+.template-editor-content { display: grid; gap: 1rem; padding-bottom: 2rem; }
+.template-editor-content .editor-fieldset { display: grid; gap: 1rem; border: 0; padding: 0; min-width: 0; }
+.template-editor-content .panel-form { display: grid; gap: .7rem; }
+.template-editor-content label { display: grid; gap: .35rem; }
+.template-editor-content textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.template-editor-content .editor-large-text { min-height: 180px; }
+.editor-character-card { padding: 1rem; border: 1px solid #2c4a38; border-radius: 8px; }
+.editor-character-card label + label { margin-top: .8rem; }
+.editor-actions { align-items: center; flex-wrap: wrap; }
+.editor-advanced-notes { margin: 0; padding-left: 1.3rem; line-height: 1.6; }

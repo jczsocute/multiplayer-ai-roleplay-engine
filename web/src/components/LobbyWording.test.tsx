@@ -32,8 +32,11 @@ const home = (
     onRefreshRooms={asyncNoop} onCreate={async () => true}
     onJoin={noop} onCloseRoom={asyncNoop} onSearch={async () => null}
     onRenameGame={asyncNoop} onCopyGame={asyncNoop} onDeleteGame={asyncNoop}
+    onExportGameHistory={asyncNoop}
     onCreateTemplate={asyncNoop} onRenameTemplate={asyncNoop}
     onToggleTemplateVisibility={asyncNoop} onLoadTemplateDetail={async () => template}
+    onEditTemplate={noop}
+    onImportTemplateZip={noop} onExportTemplateZip={noop}
     onCopyTemplate={asyncNoop} onDeleteTemplate={asyncNoop} />,
 );
 
@@ -104,7 +107,7 @@ describe("user-facing Template wording", () => {
     expectScriptWording(
       renderToStaticMarkup(
         <MyGamesPanel games={[]} busy={false} error="" onLoad={noop}
-          onRename={noop} onCopy={noop} onDelete={noop} />,
+          onRename={noop} onCopy={noop} onDelete={noop} onExportHistory={noop} />,
       ),
       "从剧本开始",
     );
@@ -114,7 +117,8 @@ describe("user-facing Template wording", () => {
     expectScriptWording(
       renderToStaticMarkup(
         <MyTemplatesPanel templates={[template]} roleCounts={[2, 3, 4]} busy={false}
-          error="" onUse={noop} onDetail={noop} onRename={noop} onCopy={noop}
+          error="" onUse={noop} onDetail={noop} onEdit={noop}
+          onImportZip={noop} onExportZip={noop} onRename={noop} onCopy={noop}
           onDelete={noop} onCreate={noop} onToggleVisibility={noop} />,
       ),
       "新建", "剧本角色数",

@@ -81,7 +81,7 @@ class AdminFixture(unittest.TestCase):
         database = Database(path / "game.db")
         await database.initialize({"game": path.name})
         return GameServer(
-            database, None, None, None,
+            database, None, None,
             round_number=await database.current_round(),
             scenario_name=path.name, room_key="", owner_user_id=owner,
         )

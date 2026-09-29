@@ -39,7 +39,8 @@ class ResourceApiTests(unittest.TestCase):
         )
         asyncio.run(self.seed_game_db(self.games_dir / self.game.id / "game.db"))
         self.manager = RoomManager(
-            self.database, self.games_dir, self.templates_dir, self.factory, max_users=10
+            self.database, self.games_dir, self.templates_dir, self.factory,
+            max_users=10, disconnect_timeout_seconds=125,
         )
         static = self.root / "static"
         static.mkdir()
@@ -60,7 +61,7 @@ class ResourceApiTests(unittest.TestCase):
         database = Database(path / "game.db")
         await database.initialize()
         return GameServer(
-            database, None, None, None, scenario_name=path.name, room_key="",
+            database, None, None, scenario_name=path.name, room_key="",
             owner_user_id=owner_user_id, max_users=10,
         )
 
@@ -567,6 +568,7 @@ class ResourceApiTests(unittest.TestCase):
         self.assertEqual(config["min_role_count"], 2)
         self.assertEqual(config["max_role_count"], 4)
         self.assertEqual(config["max_room_users"], 10)
+        self.assertEqual(config["room_disconnect_timeout_seconds"], 125)
 
 
 if __name__ == "__main__":

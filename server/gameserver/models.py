@@ -13,6 +13,7 @@ class RoundStage(StrEnum):
     WAITING_INPUT = "WAITING_INPUT"
     WORLD_UPDATING = "WORLD_UPDATING"
     WORLD_DONE = "WORLD_DONE"
+    # Old game.db rows may contain these stages; recovery reruns the whole round.
     VIEW_GENERATING = "VIEW_GENERATING"
     VIEW_DONE = "VIEW_DONE"
     NARRATION_GENERATING = "NARRATION_GENERATING"

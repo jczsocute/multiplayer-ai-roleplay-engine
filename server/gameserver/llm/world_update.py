@@ -2,6 +2,7 @@ import json
 
 from server.gameserver.llm.client import LLMClient
 from server.gameserver.llm.prompt_loader import PromptLoader
+from server.gameserver.template import same_key_structure
 
 
 class WorldUpdater:
@@ -24,16 +25,24 @@ class WorldUpdater:
             raise ValueError(f"missing actions for roles: {', '.join(missing_actions)}")
         role_sections = []
         action_sections = []
+        status_schemas = {
+            role_id: schema for role_id in self.loader.role_ids
+            if (schema := self.loader.character_status_schema(role_id)) is not None
+        }
+        output_example = {
+            "world_state": self.loader.json("world/world_state_schema.json"),
+            "character_views": {
+                role_id: self.loader.character_view_schema(role_id)
+                for role_id in self.loader.role_ids
+            },
+            "character_status": status_schemas,
+        }
         for role_id in self.loader.role_ids:
             display_name = self.loader.character_name(role_id)
             role_sections.append(
                 f"""# 角色 {role_id}（{display_name}）设定
 
-{self.loader.character(role_id)}
-
-# 角色 {role_id}（{display_name}）状态栏定义
-
-{json.dumps(self.loader.statusbar(role_id), ensure_ascii=False, indent=2)}"""
+{self.loader.character(role_id)}"""
             )
             action_sections.append(
                 f"""## {role_id}（{display_name}）
@@ -60,7 +69,7 @@ class WorldUpdater:
 
 # JSON 输出格式示例
 
-{json.dumps(self.loader.json("schemas/world_updater_output.json"), ensure_ascii=False, indent=2)}
+{json.dumps(output_example, ensure_ascii=False, indent=2)}
 """
         raw_result = await self.llm.generate(
             self.instructions,
@@ -71,20 +80,26 @@ class WorldUpdater:
         result = json.loads(raw_result)
         if not isinstance(result, dict):
             raise ValueError("world update must be a JSON object")
-        if not isinstance(result.get("world_state"), dict):
+        if not isinstance(result.get("world_state"), dict) or not same_key_structure(
+            output_example["world_state"], result["world_state"]
+        ):
             raise ValueError("world update is missing world_state")
-        if not isinstance(result.get("public_information"), dict):
-            raise ValueError("world update is missing public_information")
-        views = result.get("player_views")
-        if not isinstance(views, dict) or not all(
-            isinstance(views.get(role_id), dict) for role_id in self.loader.role_ids
+        views = result.get("character_views")
+        if not isinstance(views, dict) or set(views) != set(self.loader.role_ids) or not all(
+            isinstance(views[role_id], dict) and same_key_structure(
+                output_example["character_views"][role_id], views[role_id]
+            ) for role_id in self.loader.role_ids
         ):
-            raise ValueError("world update is missing one or more role views")
-        statusbar = result.get("player_statusbar")
-        if not isinstance(statusbar, dict) or not all(
-            isinstance(statusbar.get(role_id), dict) for role_id in self.loader.role_ids
+            raise ValueError("world update has invalid character views")
+        statuses = result.get("character_status")
+        if not isinstance(statuses, dict) or set(statuses) != set(status_schemas) or not all(
+            isinstance(statuses[role_id], dict) and same_key_structure(
+                schema, statuses[role_id]
+            ) for role_id, schema in status_schemas.items()
         ):
-            raise ValueError("world update is missing one or more role statusbars")
+            raise ValueError("world update has invalid character status")
+        if set(result) != {"world_state", "character_views", "character_status"}:
+            raise ValueError("world update has unexpected fields")
         return result
 
     @staticmethod

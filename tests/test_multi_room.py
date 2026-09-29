@@ -32,20 +32,14 @@ class RoomWorldUpdater:
     async def update(self, current_world_state: str, actions: dict[str, str]) -> dict:
         return {
             "world_state": {"actions": actions},
-            "public_information": {"ok": True},
-            "player_views": {role: {"role": role} for role in actions},
-            "player_statusbar": {role: {"ready": True} for role in actions},
+            "character_views": {role: {"role": role} for role in actions},
+            "character_status": {role: {"ready": True} for role in actions},
         }
 
 
 class RoomNarrator:
-    async def narrate(self, role, public, view, statusbar, history):
+    async def narrate(self, role, view, status, history):
         return {"text": f"narration for {role}", "status": {}}
-
-
-class UnusedViews:
-    async def generate(self, role, world):
-        raise AssertionError("normal rounds use WorldUpdater views")
 
 
 class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
@@ -71,7 +65,7 @@ class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
         database = Database(path / "game.db")
         await database.initialize({"game": path.name})
         return GameServer(
-            database, RoomWorldUpdater(), UnusedViews(), RoomNarrator(),
+            database, RoomWorldUpdater(), RoomNarrator(),
             round_number=await database.current_round(),
             scenario_name=path.name, room_key="", owner_user_id=owner,
         )
@@ -318,7 +312,7 @@ class PlatformRoomTransportTests(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 game_db = Database(path / "game.db")
                 await game_db.initialize()
-                return GameServer(game_db, None, None, None, room_key="", owner_user_id=owner)
+                return GameServer(game_db, None, None, room_key="", owner_user_id=owner)
 
             manager = RoomManager(database, root / "games", root / "templates", factory)
             room = asyncio.run(manager.create_room_from_game(alice, game.id, "abc_123"))

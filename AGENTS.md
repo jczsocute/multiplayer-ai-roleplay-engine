@@ -22,13 +22,17 @@ Keep the relevant document in sync with behavior changes.
 
 ## Runtime invariants
 
-- `world_state` is canonical. WorldUpdater produces a new world, public data,
-  views and statusbars; Narrator sees only public data and its role's view,
-  statusbar, character sheet and bounded history. Room Chat never enters AI
+- `world_state` is canonical. WorldUpdater produces a new world, character views and optional character
+  statuses; Narrator sees only its role's view, optional status, character
+  sheet and bounded history. Room Chat never enters AI
   context or persisted story history.
+- Character views are internal Narrator inputs and must not appear in player
+  WebSocket messages or story UI. Optional character status remains visible.
 - Runtime role IDs are derived `P1..PN` from payload `metadata.json`; never add
   fixed Player A/B logic. Current deployment accepts 2–4 roles, while the core
   supports dynamic N-role.
+- `characters/1..N` map to `P1..PN`; `*_schema.json` files are LLM field examples,
+  not JSON Schema. Validate payloads with `server/gameserver/template.py`.
 - `metadata.json` holds `count`, `names`, `title`, `introduction`, `tags`. Only
   `server/gameserver/roles.py` loads or writes it. `roles.json` is solely an
   input to the idempotent legacy migration; do not create new payloads with it.
@@ -37,6 +41,9 @@ Keep the relevant document in sync with behavior changes.
 - Maintain one linear timeline. Retry fully reruns a round with preserved
   actions; rollback physically removes later rounds. Do not add branches,
   revisions, soft deletion or partial recovery checkpoints.
+- Owner history export reads completed rounds from `game.db`, including world
+  states and each role's actions/narrations. Reject export during processing;
+  rollback-deleted rounds are absent.
 - Keep Room capacity, disconnect grace, kick, close and `user_room` membership
   in Platform. GameServer gets callbacks and owner capability, not platform IDs.
 - RoomManager is authoritative for same-room reconnect and explicit leave;
@@ -59,6 +66,10 @@ Keep the relevant document in sync with behavior changes.
   production build; rebuild it after Web changes.
 - User-facing Chinese calls a Template “剧本”. Keep internal identifiers
   (`Template`, `template_id`, `templates`, `/api/templates`) unchanged.
+- The Basic Web Editor owns only payload metadata, world text, character text,
+  openings and AI guidelines. Preserve advanced schema and prompt files on save.
+- Template ZIP import uses bounded extraction into staging and the same payload
+  validator; never extract an uploaded archive directly over a live Template.
 - Map protocol error codes to Chinese in the Web presentation layer; keep
   protocol names and database columns in English.
 

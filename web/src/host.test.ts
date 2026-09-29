@@ -72,7 +72,7 @@ describe("owner state", () => {
       type: "server",
       message: {
         type: "joined",
-        protocol_version: 6,
+        protocol_version: 7,
         user: { id: 1, username: "Alice" },
         role: "P1",
         view_role: "P1",

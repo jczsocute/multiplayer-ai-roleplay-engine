@@ -39,3 +39,13 @@ export type RoomItem = {
 };
 
 export type PlatformUser = AuthUser;
+
+export type TemplateEditorData = {
+  id: string;
+  title: string;
+  introduction: string;
+  tags: string[];
+  world: string;
+  ai_guidelines: string;
+  characters: Array<{ index: number; character: string; opening: string }>;
+};

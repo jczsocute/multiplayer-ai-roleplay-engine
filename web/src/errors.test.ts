@@ -19,7 +19,7 @@ const BACKEND_CODES = [
   "action_too_long", "empty_chat_message", "chat_message_too_long",
   "invalid_retry_round", "invalid_rollback_round", "role_reassign_not_paused",
   "invalid_json_object", "unknown_role", "roles_not_assigned",
-  "world_update_failed", "player_view_failed",
+  "world_update_failed",
 ];
 
 const CHINESE = /[\u4e00-\u9fff]/;

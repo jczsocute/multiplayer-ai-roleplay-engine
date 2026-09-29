@@ -47,9 +47,8 @@ class RecordingWorldUpdater:
         serial = self.serial
         return {
             "world_state": {"round": f"v{serial}"},
-            "public_information": {"round": serial},
-            "player_views": {role: {"role": role, "round": serial} for role in ROLES},
-            "player_statusbar": {role: {"hp": 10 + serial} for role in ROLES},
+            "character_views": {role: {"role": role, "round": serial} for role in ROLES},
+            "character_status": {role: {"hp": 10 + serial} for role in ROLES},
         }
 
 
@@ -60,18 +59,12 @@ class RecordingNarrator:
     async def narrate(
         self,
         player_id: str,
-        public_world_info: str,
-        player_view: str,
-        player_statusbar: dict,
+        character_view: str,
+        character_status: dict,
         chat_history: list,
     ) -> dict:
         self.calls.append(player_id)
         return {"text": f"narration {player_id} #{len(self.calls)}", "status": {}}
-
-
-class UnusedPlayerViews:
-    async def generate(self, player_id: str, world_state: str) -> str:
-        raise AssertionError("PlayerViewGenerator must not run in the normal pipeline")
 
 
 class ExplodingDatabase(Database):
@@ -93,7 +86,6 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
         server = GameServer(
             database,
             updater,
-            UnusedPlayerViews(),
             narrator,
             scenario_name="test",
             role_config=role_config,
@@ -152,7 +144,7 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
 
         with sqlite3.connect(database.path) as connection:
             # Exactly one set of outputs for the round.
-            for table in ("chat_messages", "player_views"):
+            for table in ("chat_messages", "character_views"):
                 column = "round_number" if table == "chat_messages" else "round_id"
                 self.assertEqual(
                     connection.execute(
@@ -162,13 +154,7 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(
                 connection.execute(
-                    "SELECT COUNT(*) FROM public_world_info WHERE round_id = 1"
-                ).fetchone()[0],
-                1,
-            )
-            self.assertEqual(
-                connection.execute(
-                    "SELECT COUNT(*) FROM player_statusbars WHERE round_id = 1"
+                    "SELECT COUNT(*) FROM character_statuses WHERE round_id = 1"
                 ).fetchone()[0],
                 3,
             )
@@ -269,9 +255,8 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rounds, [(1, "COMPLETED"), (2, "COMPLETED"), (3, "COMPLETED"), (4, "OPEN")])
             for table, column in (
                 ("chat_messages", "round_number"),
-                ("player_views", "round_id"),
-                ("player_statusbars", "round_id"),
-                ("public_world_info", "round_id"),
+                ("character_views", "round_id"),
+                ("character_statuses", "round_id"),
                 ("round_actions", "round_id"),
             ):
                 self.assertEqual(

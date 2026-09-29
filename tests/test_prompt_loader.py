@@ -1,11 +1,12 @@
 import unittest
 import tempfile
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 from server.gameserver.llm.client import LLMClient
 from server.gameserver.llm.prompt_loader import PromptLoader
-from server.gameserver.roles import RoleConfig
+from server.gameserver.template import validate_template
 
 
 class FakeCompletions:
@@ -42,10 +43,10 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["count"], 2)
         self.assertEqual(len(payload["names"]), payload["count"])
         self.assertTrue(payload["introduction"])
-        self.assertIn("生命状态", self.loader.statusbar("P1"))
-        self.assertIn("通信设备", self.loader.statusbar("P2"))
+        self.assertIn("生命状态", self.loader.character_status_schema("P1"))
+        self.assertIn("通信设备", self.loader.character_status_schema("P2"))
         self.assertNotEqual(
-            set(self.loader.statusbar("P1")), set(self.loader.statusbar("P2"))
+            set(self.loader.character_status_schema("P1")), set(self.loader.character_status_schema("P2"))
         )
         with self.assertRaisesRegex(ValueError, "unknown role"):
             self.loader.character("P99")
@@ -54,46 +55,31 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
 
     def test_missing_opening_has_a_clear_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            roles = RoleConfig.from_data({"count": 2, "names": ["甲", "乙"]})
-            loader = PromptLoader(directory, roles)
-            with self.assertRaisesRegex(ValueError, "opening file is missing for role P1"):
-                loader.opening("P1")
+            shutil.copytree("templates/default", Path(directory) / "story")
+            (Path(directory) / "story/characters/1/opening.md").unlink()
+            with self.assertRaisesRegex(ValueError, "opening.md"):
+                validate_template(Path(directory) / "story")
 
     def test_world_output_template_has_required_structure(self) -> None:
-        template = self.loader.json("schemas/world_updater_output.json")
-        self.assertEqual(
-            set(template),
-            {
-                "world_state",
-                "public_information",
-                "player_views",
-                "player_statusbar",
-            },
-        )
-        self.assertEqual(set(template["player_views"]), {"P1", "P2"})
-        self.assertEqual(set(template["player_statusbar"]), {"P1", "P2"})
-        legacy_name = "world_" + "update_output.json"
-        self.assertFalse((self.loader.root / "schemas" / legacy_name).exists())
+        self.assertIn("world_information", self.loader.json("world/world_state_schema.json"))
+        for role in self.loader.role_ids:
+            self.assertIn("world_information", self.loader.character_view_schema(role))
+        self.assertFalse((self.loader.root / "schemas").exists())
 
     def test_initial_state_contains_complete_character_state(self) -> None:
-        state = self.loader.json("world/initial_state.json")
-        self.assertEqual(set(state["characters"]), {"P1", "P2"})
-        for player_id in ("P1", "P2"):
-            character = state["characters"][player_id]
-            for field in (
-                "location",
-                "physical_state",
-                "mental_state",
-                "relationships",
-                "inventory",
-                "knowledge",
-            ):
-                self.assertIn(field, character)
+        state = self.loader.json("world/world_state_initial.json")
+        self.assertEqual(set(state), {"world_information"})
+        self.assertIn("风暴", state["world_information"])
+        for role in self.loader.role_ids:
+            self.assertEqual(
+                set(self.loader.character_status_initial(role)),
+                set(self.loader.character_status_schema(role)),
+            )
 
     def test_narration_prompt_requests_plain_text_not_json(self) -> None:
         prompt = self.loader.text("prompts/narration.md")
         self.assertIn("只输出普通文本", prompt)
-        self.assertIn("不要输出 JSON", prompt)
+        self.assertIn("不要 JSON", prompt)
         self.assertNotIn("必须严格输出合法 JSON", prompt)
 
     async def test_llm_client_only_enables_json_mode_when_requested(self) -> None:

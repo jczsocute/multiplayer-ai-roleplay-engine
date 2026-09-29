@@ -1,13 +1,13 @@
-import copy
 import json
 import re
 import shutil
 from pathlib import Path
 
 from server.gameserver.roles import (
-    LEGACY_ROLES_FILENAME, RoleConfig, TemplateMetadata, validate_role_count,
+    LEGACY_ROLES_FILENAME, TemplateMetadata, validate_role_count,
     validate_role_limits, write_template_metadata,
 )
+from server.gameserver.template import validate_template
 
 
 class ScenarioManager:
@@ -77,7 +77,7 @@ class ScenarioManager:
         target = self.games_dir / game_name
         if not source.is_dir():
             raise ValueError(f"unknown template: {template_name}")
-        RoleConfig.load(
+        validate_template(
             source,
             min_count=self.min_role_count,
             max_count=self.max_role_count,
@@ -100,21 +100,18 @@ class ScenarioManager:
     @staticmethod
     def _scaffold_payload(target: Path, role_count: int, title: str = "") -> None:
         character_dir = target / "characters"
-        opening_dir = character_dir / "opening"
-        statusbar_dir = character_dir / "statusbar"
-        character_templates = sorted(character_dir.glob("player_*.md"))
-        statusbar_templates = sorted(statusbar_dir.glob("player_*.json"))
-        character_texts = [path.read_text(encoding="utf-8") for path in character_templates]
-        statusbar_values = [
-            json.loads(path.read_text(encoding="utf-8")) for path in statusbar_templates
-        ]
-        if not character_texts or not statusbar_values:
+        base = character_dir / "1"
+        if not base.is_dir():
             raise ValueError("base template is missing generic role files")
-        opening_dir.mkdir(parents=True, exist_ok=True)
-        opening_templates = sorted(opening_dir.glob("player_*.md"))
-        for path in character_templates + opening_templates + statusbar_templates:
-            path.unlink()
-
+        character_text = (base / "character.md").read_text(encoding="utf-8")
+        view_schema = (base / "character_view_schema.json").read_text(encoding="utf-8")
+        status_schema = base / "character_status_schema.json"
+        status_initial = base / "character_status_initial.json"
+        status_schema_text = status_schema.read_text(encoding="utf-8") if status_schema.is_file() else None
+        status_initial_text = status_initial.read_text(encoding="utf-8") if status_initial.is_file() else None
+        for directory in character_dir.iterdir():
+            if directory.is_dir():
+                shutil.rmtree(directory)
         names = [f"角色{index}" for index in range(1, role_count + 1)]
         # A scaffolded payload only ever carries metadata.json; a legacy file
         # copied in from an old base template must not survive the scaffold.
@@ -124,51 +121,27 @@ class ScenarioManager:
             TemplateMetadata(count=role_count, names=tuple(names), title=title.strip()),
         )
         for index in range(1, role_count + 1):
-            character = character_texts[min(index - 1, len(character_texts) - 1)]
-            character = re.sub(
-                r"(?m)^# .+$", f"# 角色 P{index}", character, count=1
-            )
+            directory = character_dir / str(index)
+            directory.mkdir()
+            character = re.sub(r"(?m)^# .+$", f"# 角色 P{index}", character_text, count=1)
             character = re.sub(
                 r"(?m)^姓名[：:].+$", f"姓名：{names[index - 1]}", character, count=1
             )
-            character_dir.joinpath(f"player_{index}.md").write_text(
-                character, encoding="utf-8"
-            )
-            opening_dir.joinpath(f"player_{index}.md").write_text(
+            (directory / "character.md").write_text(character, encoding="utf-8")
+            (directory / "character_view_schema.json").write_text(view_schema, encoding="utf-8")
+            (directory / "opening.md").write_text(
                 f"这是角色{index}的开场白。请在这里描述角色当前看到、听到、知道的情况，"
                 "以及第一轮行动所需的必要背景。\n",
                 encoding="utf-8",
             )
-            statusbar = statusbar_values[min(index - 1, len(statusbar_values) - 1)]
-            statusbar_dir.joinpath(f"player_{index}.json").write_text(
-                json.dumps(statusbar, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-
-        state_path = target / "world" / "initial_state.json"
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        existing = list((state.get("characters") or {}).values())
-        base = existing or [{"name": "", "relationships": {}}]
-        characters = {}
-        for index, name in enumerate(names, 1):
-            value = copy.deepcopy(base[min(index - 1, len(base) - 1)])
-            value["name"] = name
-            value["relationships"] = {}
-            characters[f"P{index}"] = value
-        state["characters"] = characters
-        state_path.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            if status_schema_text is not None and status_initial_text is not None:
+                (directory / "character_status_schema.json").write_text(status_schema_text, encoding="utf-8")
+                (directory / "character_status_initial.json").write_text(status_initial_text, encoding="utf-8")
+        (target / "world" / "world_state_initial.json").write_text(
+            json.dumps({"world_information": "请在此填写剧本初始世界事实。"}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
-
-        schema_path = target / "schemas" / "world_updater_output.json"
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        schema["player_views"] = {f"P{index}": {} for index in range(1, role_count + 1)}
-        schema["player_statusbar"] = {
-            f"P{index}": {} for index in range(1, role_count + 1)
-        }
-        schema_path.write_text(
-            json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        validate_template(target)
 
     def delete_game(self, game_name: str) -> None:
         self._validate_name(game_name)

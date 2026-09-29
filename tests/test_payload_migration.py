@@ -18,6 +18,7 @@ from server.platform.catalog import (
 )
 from server.platform.database import PlatformDatabase
 from server.platform.room_manager import RoomManager
+from server.platform.scenario_manager import ScenarioManager
 from tests.support import user
 
 
@@ -179,6 +180,9 @@ class CatalogMigrationTests(unittest.TestCase):
 
     def test_import_migrates_a_legacy_source(self) -> None:
         source = self.root / "sources" / "old"
+        shutil.copytree(Path("templates/default"), source)
+        ScenarioManager.scaffold_roles(source, 3, title="Legacy import")
+        (source / METADATA_FILENAME).unlink()
         write_legacy(source, 3, ("甲", "乙", "丙"))
         imported = import_template(
             self.database, source, self.templates_dir, self.alice.id, "Legacy import",
@@ -196,6 +200,8 @@ class CatalogMigrationTests(unittest.TestCase):
 
     def test_import_game_migrates_only_the_copy(self) -> None:
         source = self.root / "sources" / "old_game"
+        shutil.copytree(Path("templates/default"), source)
+        (source / METADATA_FILENAME).unlink()
         write_legacy(source, 2, ("甲", "乙"))
         imported = import_game(
             self.database, source, self.games_dir, self.alice.id, "Old Game"
@@ -300,11 +306,11 @@ class MigratedGameRuntimeTests(unittest.IsolatedAsyncioTestCase):
         roles = RoleConfig.load(path)
         database = Database(str(path / "game.db"), roles.role_ids)
         initial_state = json.loads(
-            (path / "world" / "initial_state.json").read_text(encoding="utf-8")
+            (path / "world" / "world_state_initial.json").read_text(encoding="utf-8")
         )
         await database.initialize(initial_state)
         server = GameServer(
-            database, StubWorldUpdater(), StubViews(), StubNarrator(),
+            database, StubWorldUpdater(), StubNarrator(),
             round_number=await database.current_round(),
             scenario_name=path.name, room_key="", owner_user_id=owner_user_id,
             role_config=roles, max_users=10,
@@ -348,20 +354,14 @@ class StubWorldUpdater:
     async def update(self, current_world_state, actions):
         return {
             "world_state": {"actions": actions},
-            "public_information": {"ok": True},
-            "player_views": {role: {"role": role} for role in actions},
-            "player_statusbar": {role: {"ready": True} for role in actions},
+            "character_views": {role: {"role": role} for role in actions},
+            "character_status": {role: {"ready": True} for role in actions},
         }
 
 
 class StubNarrator:
-    async def narrate(self, role, public, view, statusbar, history):
+    async def narrate(self, role, view, status, history):
         return {"text": f"narration for {role}", "status": {}}
-
-
-class StubViews:
-    async def generate(self, role, world):
-        raise AssertionError("WorldUpdater supplies views")
 
 
 if __name__ == "__main__":

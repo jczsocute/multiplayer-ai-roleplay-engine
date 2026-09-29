@@ -6,11 +6,11 @@
 
 - Account：稳定用户身份、登录与会话。
 - Platform：剧本、存档和房间的归属、公开目录与管理。
-- 剧本：从 `templates/default/` 创建，也可导入已有 payload；创建存档时复制为独立快照。
+- 剧本：从 `templates/default/` 创建，也可在 Web 上传、下载符合当前格式的 ZIP；创建存档时复制为独立快照。
 - Room：房间码、可选密码、成员与观众、断线宽限期；多个房间可同时运行。
-- Web：大厅、活跃房间和剧本广场；创建或加入房间、管理我的剧本与我的存档、分配角色和游玩。
+- Web：大厅、活跃房间和剧本广场；创建或加入房间、用基础编辑器填写剧本、管理我的存档、分配角色和游玩。
 - Admin：本机 `client/admin.py` 管理用户、剧本与房间。
-- GameServer：动态角色、独立视角与叙事、回合恢复、retry 和线性 rollback。
+- GameServer：动态角色、按角色视角生成叙事、回合恢复、retry 和线性 rollback；存档 owner 可下载完整历史 ZIP。
 
 资源关系：`User → 剧本 →（快照）存档 →（激活）Room → GameServer`。用户拥有自己的剧本和存档；公开剧本可供其他用户创建自己的存档。
 
@@ -34,7 +34,8 @@ python -m server.main --set-admin <用户名>
 python client/admin.py
 ```
 
-如需导入本机已有的剧本目录，参见 [Platform 文档](server/platform/README.md)。`templates/default/` 是创建剧本的 scaffold，不是可直接游玩的剧本。在线剧本编辑器仍是后续计划。
+如需导入本机已有的剧本目录，参见 [Platform 文档](server/platform/README.md)。`templates/default/` 是创建剧本的 scaffold，不是可直接游玩的剧本。新建剧本后会直接打开基础编辑器；也可从“我的剧本”进入编辑页。高级内容可通过剧本 ZIP 下载、修改后再导入。
+玩家故事界面只显示开场、行动、叙事及剧本启用的角色状态栏；WorldUpdater 生成的角色视角只作为 Narrator 输入。房主可从管理面板或“我的存档”下载已完成回合的历史 ZIP，查看世界状态与角色信息；处理中需等待本轮完成。
 
 ## 仓库结构
 

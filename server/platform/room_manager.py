@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 
 from server.gameserver.factory import load_game_server
 from server.gameserver.game_server import GameServer
-from server.gameserver.roles import RoleConfig
+from server.gameserver.template import validate_template
 from server.platform.auth import hash_password
 from server.platform.catalog import create_game_snapshot, delete_game
 from server.platform.database import PlatformDatabase, generate_room_code
@@ -43,6 +43,7 @@ class RoomManager:
         max_users: int = DEFAULT_MAX_ROOM_USERS,
         min_role_count: int = 2,
         max_role_count: int = 4,
+        disconnect_timeout_seconds: int = 300,
     ) -> None:
         if max_users < 1:
             raise ValueError("max_users must be a positive integer")
@@ -53,13 +54,14 @@ class RoomManager:
         self.max_users = max_users
         self.min_role_count = min_role_count
         self.max_role_count = max_role_count
+        self.disconnect_timeout_seconds = disconnect_timeout_seconds
         self.rooms: dict[str, RoomRuntime] = {}
         self.user_room: dict[int, str] = {}
         self._user_connection: dict[int, object] = {}
         self._lock = asyncio.Lock()
 
     async def load_active_rooms(self) -> None:
-        for room in self.database.list_rooms():
+        for room in await asyncio.to_thread(self.database.list_rooms):
             try:
                 runtime = await self._load_runtime(room)
                 self.rooms[room.code] = runtime
@@ -80,7 +82,7 @@ class RoomManager:
     async def create_room_from_game(
         self, owner: AuthenticatedUser, game_id: str, password: str = ""
     ) -> RoomRuntime:
-        game = self.database.get_game(game_id)
+        game = await asyncio.to_thread(self.database.get_game, game_id)
         if game is None:
             raise ValueError("game_not_found")
         if game.owner_user_id != owner.id:
@@ -91,40 +93,46 @@ class RoomManager:
         self, owner: AuthenticatedUser, template_id: str, game_name: str,
         password: str = "",
     ) -> RoomRuntime:
-        template = self.database.get_template(template_id)
+        template = await asyncio.to_thread(self.database.get_template, template_id)
         if template is None:
             raise ValueError("template_not_found")
         if template.owner_user_id != owner.id and not template.is_public:
             raise PermissionError("forbidden")
-        if any(room.owner_user_id == owner.id for room in self.database.list_rooms()):
+        owned_rooms = await asyncio.to_thread(self.database.list_rooms)
+        if any(room.owner_user_id == owner.id for room in owned_rooms):
             raise ValueError("owner_already_has_room")
-        RoleConfig.load(
+        await asyncio.to_thread(
+            validate_template,
             self.templates_dir / template_id,
             min_count=self.min_role_count, max_count=self.max_role_count,
         )
         name = game_name.strip() or f"{template.name} - Game"
-        game = create_game_snapshot(
+        game = await asyncio.to_thread(
+            create_game_snapshot,
             self.database, template_id, owner.id, name,
             self.templates_dir, self.games_dir,
         )
         try:
             return await self._create(owner.id, game.id, password)
         except Exception:
-            delete_game(self.database, game.id, owner.id, self.games_dir)
+            await asyncio.to_thread(
+                delete_game, self.database, game.id, owner.id, self.games_dir
+            )
             raise
 
     async def _create(self, owner_id: int, game_id: str, password: str) -> RoomRuntime:
-        password_hash, salt = _password_values(password)
+        password_hash, salt = await asyncio.to_thread(_password_values, password)
         async with self._lock:
             for _ in range(20):
                 code = generate_room_code()
-                if self.database.get_room(code) is None:
+                if await asyncio.to_thread(self.database.get_room, code) is None:
                     break
             else:
                 raise RuntimeError("room_code_collision")
             try:
-                metadata = self.database.create_room_metadata(
-                    code, owner_id, game_id, password_hash, salt
+                metadata = await asyncio.to_thread(
+                    self.database.create_room_metadata,
+                    code, owner_id, game_id, password_hash, salt,
                 )
             except sqlite3.IntegrityError as exc:
                 message = str(exc)
@@ -136,13 +144,13 @@ class RoomManager:
             try:
                 runtime = await self._load_runtime(metadata)
             except Exception:
-                self.database.delete_room(code)
+                await asyncio.to_thread(self.database.delete_room, code)
                 raise
             self.rooms[code] = runtime
             return runtime
 
     async def _load_runtime(self, room: RoomMetadata) -> RoomRuntime:
-        game = self.database.get_game(room.game_id)
+        game = await asyncio.to_thread(self.database.get_game, room.game_id)
         if game is None:
             raise ValueError(f"missing game metadata: {room.game_id}")
         path = self.games_dir / room.game_id
@@ -154,7 +162,7 @@ class RoomManager:
         return RoomRuntime(room.code, room.game_id, room.owner_user_id, server)
 
     async def _touch_game(self, game_id: str) -> None:
-        self.database.touch_game(game_id)
+        await asyncio.to_thread(self.database.touch_game, game_id)
 
     async def _on_member_left(self, room_code: str, user_id: int) -> None:
         """Called once a participant is definitively gone (timeout or kick)."""
@@ -244,7 +252,7 @@ class RoomManager:
     ) -> None:
         """Close a Room. ``admin=True`` lets the platform admin close any Room."""
         code = code.upper()
-        room = self.database.get_room(code)
+        room = await asyncio.to_thread(self.database.get_room, code)
         if room is None:
             raise ValueError("room_not_found")
         if not admin and room.owner_user_id != owner_user_id:
@@ -257,16 +265,18 @@ class RoomManager:
                 self._user_connection.pop(user_id, None)
         if runtime is not None:
             await runtime.game_server.close_connections("房主已关闭房间")
-        self.database.delete_room(code)
+        await asyncio.to_thread(self.database.delete_room, code)
 
     async def public_room(self, code: str) -> dict | None:
         runtime = self.get_runtime(code)
-        room = self.database.get_room(code.upper())
+        room = await asyncio.to_thread(self.database.get_room, code.upper())
         if runtime is None or room is None:
             return None
-        game = self.database.get_game(room.game_id)
-        owner = self.database.user_by_id(room.owner_user_id)
-        password = self.database.get_room_password(room.code)
+        game, owner, password = await asyncio.gather(
+            asyncio.to_thread(self.database.get_game, room.game_id),
+            asyncio.to_thread(self.database.user_by_id, room.owner_user_id),
+            asyncio.to_thread(self.database.get_room_password, room.code),
+        )
         presence = await runtime.game_server.sessions.presence_snapshot()
         return {
             "code": room.code,
@@ -294,12 +304,14 @@ class RoomManager:
     async def admin_room(self, code: str) -> dict | None:
         """Full Room detail for the local Admin console (never sent to players)."""
         runtime = self.get_runtime(code)
-        room = self.database.get_room(code.upper())
+        room = await asyncio.to_thread(self.database.get_room, code.upper())
         if room is None:
             return None
-        game = self.database.get_game(room.game_id)
-        owner = self.database.user_by_id(room.owner_user_id)
-        password = self.database.get_room_password(room.code)
+        game, owner, password = await asyncio.gather(
+            asyncio.to_thread(self.database.get_game, room.game_id),
+            asyncio.to_thread(self.database.user_by_id, room.owner_user_id),
+            asyncio.to_thread(self.database.get_room_password, room.code),
+        )
         detail = {
             "code": room.code,
             "game_id": room.game_id,
@@ -338,7 +350,8 @@ class RoomManager:
 
     async def list_admin_rooms(self) -> list[dict]:
         values = []
-        for code in sorted(room.code for room in self.database.list_rooms()):
+        rooms = await asyncio.to_thread(self.database.list_rooms)
+        for code in sorted(room.code for room in rooms):
             room = await self.admin_room(code)
             if room is not None:
                 values.append(room)

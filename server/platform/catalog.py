@@ -7,10 +7,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from server.gameserver.roles import (
-    LEGACY_ROLES_FILENAME, METADATA_FILENAME, RoleConfig, TemplateMetadata,
+    LEGACY_ROLES_FILENAME, METADATA_FILENAME, TemplateMetadata,
     load_template_metadata, migrate_roles_to_metadata, validate_role_count,
     write_template_metadata,
 )
+from server.gameserver.template import validate_template
 from server.platform.database import (
     MAX_RESOURCE_NAME_LENGTH, PlatformDatabase, generate_stable_id,
 )
@@ -45,7 +46,7 @@ def import_template(
         migrate_roles_to_metadata(
             staging, title=title or name, introduction=introduction, tags=tags
         )
-        RoleConfig.load(staging, min_count=1, max_count=10_000)
+        validate_template(staging, min_count=1, max_count=10_000)
         # Only the imported copy takes the requested title.
         set_payload_title(staging, title or name)
         metadata = database.create_template(
@@ -119,15 +120,24 @@ def create_game_snapshot(
     source = templates_dir / template_id
     if not source.is_dir():
         raise ValueError(f"template payload is missing: {template_id}")
+    validate_template(source, min_count=1, max_count=10_000)
     game_id = _available_id(database, "game")
     target = games_dir / game_id
+    staging = games_dir / f".{game_id}.creating"
     games_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, target)
     try:
-        return database.create_game(game_id, owner_user_id, name, template_id)
+        shutil.copytree(source, staging)
+        metadata = database.create_game(game_id, owner_user_id, name, template_id)
     except Exception:
-        shutil.rmtree(target)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
+    try:
+        staging.rename(target)
+    except Exception:
+        database.delete_game_metadata(game_id)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return metadata
 
 
 def import_game(
@@ -146,7 +156,7 @@ def import_game(
     try:
         shutil.copytree(source, staging)
         migrate_roles_to_metadata(staging)
-        RoleConfig.load(staging, min_count=1, max_count=10_000)
+        validate_template(staging, min_count=1, max_count=10_000)
         metadata = database.create_game(game_id, owner_user_id, name, None)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
@@ -448,7 +458,7 @@ def create_template_from_scaffold(
     shutil.copytree(base, staging)
     try:
         ScenarioManager.scaffold_roles(staging, role_count, title=title or name)
-        RoleConfig.load(
+        validate_template(
             staging,
             min_count=min_role_count,
             max_count=max_role_count,
@@ -474,8 +484,9 @@ def copy_template(
     """Copy one of the owner's Templates into a new private Template."""
     template = require_owned_template(database, template_id, owner_user_id)
     source = templates_dir / template_id
-    if load_payload_metadata(Path(templates_dir) / template_id) is None:
+    if not source.is_dir():
         raise ValueError("template_not_found")
+    validate_template(source, min_count=1, max_count=10_000)
     new_id = _available_id(database, "tmpl")
     name = next_copy_name(
         template.name,

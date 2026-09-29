@@ -21,15 +21,9 @@ class FakeUpdater:
     async def update(self, **_kwargs):
         return {
             "world_state": {"place": "hall"},
-            "public_information": {"time": "night"},
-            "player_views": {"P1": {"seen": "door"}, "P2": {"seen": "window"}},
-            "player_statusbar": {"P1": {"hp": 10}, "P2": {"hp": 20}},
+            "character_views": {"P1": {"seen": "door"}, "P2": {"seen": "window"}},
+            "character_status": {"P1": {"hp": 10}, "P2": {"hp": 20}},
         }
-
-
-class FakeViews:
-    async def generate(self, player_id, _world_state):
-        return f"view {player_id}"
 
 
 class FakeNarrator:
@@ -41,9 +35,8 @@ class DynamicUpdater:
     async def update(self, current_world_state, actions):
         return {
             "world_state": {"place": "hall"},
-            "public_information": {},
-            "player_views": {role: {"seen": role} for role in actions},
-            "player_statusbar": {role: {"hp": 10} for role in actions},
+            "character_views": {role: {"seen": role} for role in actions},
+            "character_status": {role: {"hp": 10} for role in actions},
         }
 
 
@@ -75,7 +68,7 @@ class WebTransportTests(unittest.TestCase):
         database = Database(str(Path(self.tempdir.name) / "game.db"))
         asyncio.run(database.initialize({}, {"P1": {"hp": 10}, "P2": {"hp": 20}}))
         self.game = GameServer(
-            database, FakeUpdater(), FakeViews(), FakeNarrator(), scenario_name="test"
+            database, FakeUpdater(), FakeNarrator(), scenario_name="test"
         )
         self.accounts = PlatformDatabase(str(Path(self.tempdir.name) / "platform.db"))
         self.accounts.initialize()
@@ -175,7 +168,7 @@ class WebTransportTests(unittest.TestCase):
         database = Database(str(Path(self.tempdir.name) / "owner.db"))
         asyncio.run(database.initialize("# initial", {"P1": {}, "P2": {}}))
         game = GameServer(
-            database, FakeUpdater(), FakeViews(), FakeNarrator(),
+            database, FakeUpdater(), FakeNarrator(),
             scenario_name="test", owner_user_id=1,
         )
         app = create_web_app(game, self.accounts, Path(self.tempdir.name) / "static")
@@ -249,7 +242,7 @@ class WebTransportTests(unittest.TestCase):
                 self.assertEqual(terminal_round["role"], "P2")
                 self.assertEqual(
                     [entry["kind"] for entry in browser_round["entries"]],
-                    ["action", "narration", "statusbar"],
+                    ["action", "narration", "character_status"],
                 )
                 self._receive_until(browser, "round_complete")
                 self._receive_until(terminal, "round_complete")
@@ -265,7 +258,6 @@ class WebTransportTests(unittest.TestCase):
         game = GameServer(
             database,
             DynamicUpdater(),
-            FakeViews(),
             FakeNarrator(),
             scenario_name="three",
             role_config=roles,
@@ -312,7 +304,7 @@ class ExplicitHandlerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            game = GameServer(database, None, None, None)
+            game = GameServer(database, None, None)
 
             public = SequenceConnection({"type": "join_host"})
             await game.public_handler(public, user(1, "Browser"))
@@ -324,7 +316,7 @@ class ExplicitHandlerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            game = GameServer(database, None, None, None)
+            game = GameServer(database, None, None)
             connection = SequenceConnection({"type": "join"})
             await game.sessions.join(user(1, "Alice"), connection)
             await game.sessions.join(user(2, "Bob"), SequenceConnection({"type": "join"}))

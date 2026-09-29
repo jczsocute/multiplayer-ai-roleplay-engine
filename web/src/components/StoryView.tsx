@@ -68,7 +68,7 @@ export function StoryView({
       </article>}
       {viewRole && entries.length === 0 && <p className="muted">尚无已完成回合。</p>}
       {entries.map((entry, index) => {
-        if (entry.kind === "statusbar") {
+        if (entry.kind === "character_status") {
           return <details className="statusbar-card" key={`${entry.round ?? "live"}-statusbar-${index}`}>
             <summary>状态 · 第 {entry.round ?? "—"} 回合</summary>
             <StatusView value={entry.content} />

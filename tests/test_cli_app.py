@@ -149,7 +149,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None, owner_user_id=1)
+            server = GameServer(database, None, None, owner_user_id=1)
             owner = FakeConnection()
             await server.sessions.join(user(1, "Chengzhe"), owner)
             await server.sessions.join(user(2, "Alice"), FakeConnection())
@@ -174,7 +174,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             await database.initialize(
                 {}, {"P1": {"secret_a": 1}, "P2": {"secret_b": 2}}
             )
-            server = GameServer(database, None, None, None)
+            server = GameServer(database, None, None)
             connection_a = FakeConnection()
             connection_b = FakeConnection()
             await server.sessions.join(user(1, "Alice"), connection_a)
@@ -184,9 +184,9 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
             await server._send_status(1, connection_a)
             await server._send_status(2, connection_b)
 
-            self.assertEqual(connection_a.messages[-1]["statusbar"], {"secret_a": 1})
-            self.assertEqual(connection_b.messages[-1]["statusbar"], {"secret_b": 2})
-            self.assertNotIn("secret_b", connection_a.messages[-1]["statusbar"])
+            self.assertEqual(connection_a.messages[-1]["character_status"], {"secret_a": 1})
+            self.assertEqual(connection_b.messages[-1]["character_status"], {"secret_b": 2})
+            self.assertNotIn("secret_b", connection_a.messages[-1]["character_status"])
             self.assertNotIn("public_information", connection_a.messages[-1])
             self.assertNotIn("public_information", connection_b.messages[-1])
 
@@ -194,7 +194,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None)
+            server = GameServer(database, None, None)
             connection_a = FakeConnection()
             connection_b = FakeConnection()
             await server.sessions.join(user(1, "Chengzhe"), connection_a)
@@ -223,7 +223,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None)
+            server = GameServer(database, None, None)
             connection = FakeConnection()
             await server.sessions.join(user(1, "Alice"), connection)
             await server.sessions.join(user(2, "Bob"), FakeConnection())
@@ -246,7 +246,7 @@ class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None)
+            server = GameServer(database, None, None)
             connection_b = FakeConnection()
             await server.sessions.join(user(2, "Alice"), connection_b)
 

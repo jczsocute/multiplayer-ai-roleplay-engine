@@ -13,7 +13,6 @@ from server.gameserver.database import Database
 from server.gameserver.game_server import GameServer
 from server.gameserver.llm.client import LLMClient
 from server.gameserver.llm.narrator import Narrator
-from server.gameserver.llm.player_view import PlayerViewGenerator
 from server.gameserver.llm.prompt_loader import PromptLoader
 from server.gameserver.llm.world_update import WorldUpdater
 from server.gameserver.protocol import MAX_WEBSOCKET_MESSAGE_BYTES
@@ -44,10 +43,11 @@ async def run_game_server(
         max_count=settings.max_role_count,
     )
     loader = PromptLoader(str(game_path), role_config)
-    database = Database(str(game_path / "game.db"), role_config.role_ids)
+    status_roles = tuple(role for role in role_config.role_ids if loader.character_status_schema(role) is not None)
+    database = Database(str(game_path / "game.db"), role_config.role_ids, status_roles)
     await database.initialize(
-        loader.json("world/initial_state.json"),
-        {role_id: loader.statusbar(role_id) for role_id in role_config.role_ids},
+        loader.json("world/world_state_initial.json"),
+        {role_id: loader.character_status_initial(role_id) for role_id in status_roles},
     )
     if owner_user_id is not None and await database.get_owner_user_id() is None:
         await database.set_owner_user_id(owner_user_id)
@@ -62,7 +62,6 @@ async def run_game_server(
     game = GameServer(
         database,
         WorldUpdater(llm, loader, settings.world_update_max_tokens),
-        PlayerViewGenerator(llm, loader),
         Narrator(llm, loader, settings.narration_max_tokens),
         await database.current_round(),
         scenario_name,

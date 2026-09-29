@@ -60,7 +60,7 @@ class RoomKeyTests(unittest.IsolatedAsyncioTestCase):
         database = Database(str(Path(directory.name) / "game.db"))
         await database.initialize()
         return GameServer(
-            database, None, None, None,
+            database, None, None,
             room_key=KEY, disconnect_grace_seconds=grace,
         )
 
@@ -97,7 +97,7 @@ class RoomKeyTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(directory.cleanup)
         database = Database(str(Path(directory.name) / "game.db"))
         await database.initialize()
-        game = GameServer(database, None, None, None, room_key="", disconnect_grace_seconds=1)
+        game = GameServer(database, None, None, room_key="", disconnect_grace_seconds=1)
 
         connection = ScriptedConnection([json.dumps({"type": "join"})])
         await game.public_handler(connection, ALICE)
@@ -112,7 +112,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         database = Database(str(Path(directory.name) / "game.db"))
         await database.initialize()
         return GameServer(
-            database, None, None, None,
+            database, None, None,
             room_key=KEY, disconnect_grace_seconds=grace,
         )
 

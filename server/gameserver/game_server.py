@@ -8,7 +8,6 @@ from websockets.exceptions import ConnectionClosed
 from server.config import normalize_room_key
 from server.gameserver.database import Database
 from server.gameserver.llm.narrator import Narrator
-from server.gameserver.llm.player_view import PlayerViewGenerator
 from server.gameserver.llm.world_update import WorldUpdater
 from server.gameserver.models import CompletedRound, PlayerStatus, RoundStage
 from server.gameserver.protocol import (
@@ -40,7 +39,6 @@ class GameServer:
         self,
         database: Database,
         world_updater: WorldUpdater,
-        player_views: PlayerViewGenerator,
         narrator: Narrator,
         round_number: int = 1,
         scenario_name: str = "default",
@@ -63,7 +61,6 @@ class GameServer:
         self.role_ids = role_config.role_ids
         self.database = database
         self.world_updater = world_updater
-        self.player_views = player_views
         self.narrator = narrator
         self.rounds = RoundManager(self.role_ids, round_number)
         self.sessions = Sessions(
@@ -141,7 +138,6 @@ class GameServer:
                         websocket,
                         participant.view_role,
                         include_draft=participant.role is not None,
-                        include_current_view=participant.role is not None,
                     )
                 await self._announce_join(result)
             else:
@@ -239,7 +235,7 @@ class GameServer:
     async def _send_resume_view(self, user, websocket: Connection) -> None:
         if user.role:
             await self._send_role_view(
-                websocket, user.role, include_draft=True, include_current_view=True
+                websocket, user.role, include_draft=True
             )
         elif user.view_role:
             await self._send_role_view(websocket, user.view_role)
@@ -483,7 +479,6 @@ class GameServer:
                     user.websocket,
                     user.view_role,
                     include_draft=user.role is not None,
-                    include_current_view=user.role is not None,
                 )
 
         await self._broadcast_presence()
@@ -508,7 +503,6 @@ class GameServer:
         role: str,
         *,
         include_draft: bool = False,
-        include_current_view: bool = False,
     ) -> dict:
         if role not in self.role_ids:
             raise RoundError("unknown_role")
@@ -519,11 +513,9 @@ class GameServer:
             "character_name": self.character_names[role],
             "opening": self.openings[role],
             "history": await self.database.get_role_history(role),
-            "statusbar": display["statusbar"],
+            "character_status": display["character_status"],
             "reset": True,
         }
-        if include_current_view:
-            message["current_view"] = await self.database.get_latest_player_view(role)
         if include_draft:
             message["draft"] = self.rounds.players[role].action
         return message
@@ -534,10 +526,9 @@ class GameServer:
         role: str,
         *,
         include_draft: bool = False,
-        include_current_view: bool = False,
     ) -> None:
         message = await self._build_role_view(
-            role, include_draft=include_draft, include_current_view=include_current_view
+            role, include_draft=include_draft
         )
         await websocket.send(json.dumps(message, ensure_ascii=False))
 
@@ -599,36 +590,6 @@ class GameServer:
             await self._broadcast_state()
             return
 
-        await self._continue_views(completed)
-
-    async def _continue_views(self, completed: CompletedRound) -> None:
-        await self._set_stage(RoundStage.VIEW_GENERATING)
-        data = await self.database.get_recovery_data(completed.round_number)
-        missing = [
-            role_id for role_id in self.role_ids
-            if role_id not in data["player_views"]
-        ]
-        if missing:
-            results = await asyncio.gather(
-                *(self.player_views.generate(player_id, data["world_state"]) for player_id in missing),
-                return_exceptions=True,
-            )
-            views = {
-                player_id: result
-                for player_id, result in zip(missing, results, strict=True)
-                if isinstance(result, str)
-            }
-            if views:
-                await self.database.save_player_views(completed.round_number, views)
-            if len(views) != len(missing):
-                logger.error("Player view recovery failed for round %s", completed.round_number)
-                await self._broadcast_message({
-                    "type": "error",
-                    "code": "player_view_failed",
-                    "detail": "角色视角生成失败，房主可以重试本回合。",
-                })
-                return
-        await self._set_stage(RoundStage.VIEW_DONE)
         await self._continue_narrations(completed)
 
     async def _continue_narrations(self, completed: CompletedRound) -> None:
@@ -653,9 +614,8 @@ class GameServer:
             *(
                 self.narrator.narrate(
                     player_id,
-                    data["public_world_info"],
-                    data["player_views"][player_id],
-                    display["statusbar"],
+                    data["character_views"][player_id],
+                    display["character_status"],
                     history,
                 )
                 for player_id, history, display in zip(
@@ -697,19 +657,21 @@ class GameServer:
                     "round": completed.round_number,
                     "entries": [
                         {
+                            "round": completed.round_number,
                             "kind": "action",
                             "content": completed.actions[player_id],
                         },
                         {
+                            "round": completed.round_number,
                             "kind": "narration",
                             "content": narration["text"],
                         },
-                        {
-                            "kind": "statusbar",
-                            "content": display["statusbar"],
-                        },
-                    ],
-                    "statusbar": display["statusbar"],
+                    ] + ([{
+                        "round": completed.round_number,
+                        "kind": "character_status",
+                        "content": display["character_status"],
+                    }] if display["character_status"] is not None else []),
+                    "character_status": display["character_status"],
                 },
             )
         await self.sessions.broadcast(

@@ -54,7 +54,7 @@ class RoomLifecycleTests(unittest.IsolatedAsyncioTestCase):
         database = Database(path / "game.db", ("P1",))
         await database.initialize()
         server = GameServer(
-            database, None, None, None,
+            database, None, None,
             round_number=await database.current_round(),
             scenario_name=path.name, room_key="", owner_user_id=owner_user_id,
             role_config=RoleConfig(("P1",), {"P1": "独奏"}),
@@ -286,20 +286,14 @@ class StubWorldUpdater:
     async def update(self, current_world_state: str, actions: dict[str, str]) -> dict:
         return {
             "world_state": {"actions": actions},
-            "public_information": {"ok": True},
-            "player_views": {role: {"role": role} for role in actions},
-            "player_statusbar": {role: {"ready": True} for role in actions},
+            "character_views": {role: {"role": role} for role in actions},
+            "character_status": {role: {"ready": True} for role in actions},
         }
 
 
 class StubNarrator:
-    async def narrate(self, role, public, view, statusbar, history):
+    async def narrate(self, role, view, status, history):
         return {"text": f"narration for {role}", "status": {}}
-
-
-class StubViews:
-    async def generate(self, role, world):
-        raise AssertionError("normal rounds use WorldUpdater views")
 
 
 class GameTouchTests(unittest.IsolatedAsyncioTestCase):
@@ -327,7 +321,7 @@ class GameTouchTests(unittest.IsolatedAsyncioTestCase):
         database = Database(path / "game.db", ("P1",))
         await database.initialize()
         return GameServer(
-            database, StubWorldUpdater(), StubViews(), StubNarrator(),
+            database, StubWorldUpdater(), StubNarrator(),
             round_number=await database.current_round(),
             scenario_name=path.name, room_key="", owner_user_id=owner_user_id,
             role_config=RoleConfig(("P1",), {"P1": "独奏"}), max_users=10,

@@ -85,33 +85,18 @@ class ScenarioRoleScaffoldTests(unittest.TestCase):
                 })
                 # A scaffolded payload never keeps the legacy file name.
                 self.assertFalse((scenario / "roles.json").exists())
-                role_ids = {f"P{index}" for index in range(1, count + 1)}
                 self.assertEqual(
-                    {path.stem for path in (scenario / "characters").glob("player_*.md")},
-                    {f"player_{index}" for index in range(1, count + 1)},
+                    {path.name for path in (scenario / "characters").iterdir()},
+                    {str(index) for index in range(1, count + 1)},
                 )
-                self.assertEqual(
-                    {path.stem for path in (scenario / "characters/statusbar").glob("player_*.json")},
-                    {f"player_{index}" for index in range(1, count + 1)},
-                )
-                opening_files = sorted(
-                    (scenario / "characters/opening").glob("player_*.md")
-                )
-                self.assertEqual(
-                    {path.stem for path in opening_files},
-                    {f"player_{index}" for index in range(1, count + 1)},
-                )
-                for index, path in enumerate(opening_files, 1):
+                for index in range(1, count + 1):
+                    path = scenario / "characters" / str(index) / "opening.md"
                     self.assertIn(f"角色{index}", path.read_text(encoding="utf-8"))
                 initial = json.loads(
-                    (scenario / "world/initial_state.json").read_text(encoding="utf-8")
+                    (scenario / "world/world_state_initial.json").read_text(encoding="utf-8")
                 )
-                schema = json.loads(
-                    (scenario / "schemas/world_updater_output.json").read_text(encoding="utf-8")
-                )
-                self.assertEqual(set(initial["characters"]), role_ids)
-                self.assertEqual(set(schema["player_views"]), role_ids)
-                self.assertEqual(set(schema["player_statusbar"]), role_ids)
+                self.assertEqual(set(initial), {"world_information"})
+                self.assertFalse((scenario / "schemas").exists())
 
 
 class DynamicRoundAndSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -166,9 +151,8 @@ class DynamicDatabaseTests(unittest.IsolatedAsyncioTestCase):
             completed = CompletedRound(1, {role: f"action {role}" for role in roles})
             result = {
                 "world_state": {"tick": 1},
-                "public_information": {"weather": "rain"},
-                "player_views": {role: {"seen": role} for role in roles},
-                "player_statusbar": {role: {"energy": 9} for role in roles},
+                "character_views": {role: {"seen": role} for role in roles},
+                "character_status": {role: {"energy": 9} for role in roles},
             }
             await database.save_world_update(completed, result)
             await database.save_narrations(
@@ -176,17 +160,17 @@ class DynamicDatabaseTests(unittest.IsolatedAsyncioTestCase):
             )
             recovery = await database.get_recovery_data(1)
             self.assertEqual(recovery["actions"], completed.actions)
-            self.assertEqual(set(recovery["player_views"]), set(roles))
+            self.assertEqual(set(recovery["character_views"]), set(roles))
             self.assertEqual(set(recovery["narrations"]), set(roles))
             for role in roles:
                 self.assertEqual(
-                    (await database.get_player_display(role))["statusbar"], {"energy": 9}
+                    (await database.get_player_display(role))["character_status"], {"energy": 9}
                 )
             await database.finish_round(completed)
             for role in roles:
                 self.assertEqual(
                     [entry["kind"] for entry in await database.get_role_history(role)],
-                    ["action", "narration", "statusbar"],
+                    ["action", "narration", "character_status"],
                 )
             with sqlite3.connect(path) as connection:
                 self.assertEqual(
@@ -202,9 +186,8 @@ class ThreeRoleWorldUpdater:
         self.calls.append(actions)
         return {
             "world_state": {"round": 1},
-            "public_information": {},
-            "player_views": {role: {"view": role} for role in actions},
-            "player_statusbar": {role: {"ready": True} for role in actions},
+            "character_views": {role: {"view": role} for role in actions},
+            "character_status": {role: {"ready": True} for role in actions},
         }
 
 
@@ -212,14 +195,9 @@ class ThreeRoleNarrator:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def narrate(self, role, public, view, statusbar, history):
+    async def narrate(self, role, view, status, history):
         self.calls.append(role)
         return {"text": f"narration {role}", "status": {}}
-
-
-class UnusedViews:
-    async def generate(self, role, world):
-        raise AssertionError("normal flow must use WorldUpdater views")
 
 
 class DynamicAiFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -233,7 +211,7 @@ class DynamicAiFlowTests(unittest.IsolatedAsyncioTestCase):
             updater = ThreeRoleWorldUpdater()
             narrator = ThreeRoleNarrator()
             server = GameServer(
-                database, updater, UnusedViews(), narrator, role_config=roles
+                database, updater, narrator, role_config=roles
             )
             sockets = {}
             assignments = {}

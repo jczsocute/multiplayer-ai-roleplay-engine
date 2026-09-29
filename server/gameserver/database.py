@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS players (
     player_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     current_action TEXT NOT NULL DEFAULT '',
-    statusbar_content TEXT NOT NULL DEFAULT '{}',
+    character_status_content TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -42,28 +42,21 @@ CREATE TABLE IF NOT EXISTS world_state (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS player_views (
+CREATE TABLE IF NOT EXISTS character_views (
     round_id INTEGER NOT NULL,
     player_id TEXT NOT NULL,
-    view_content TEXT NOT NULL,
+    character_view_content TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (round_id, player_id),
     FOREIGN KEY (round_id) REFERENCES rounds(round_number)
 );
 
-CREATE TABLE IF NOT EXISTS player_statusbars (
+CREATE TABLE IF NOT EXISTS character_statuses (
     round_id INTEGER NOT NULL,
     player_id TEXT NOT NULL,
     content TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (round_id, player_id),
-    FOREIGN KEY (round_id) REFERENCES rounds(round_number)
-);
-
-CREATE TABLE IF NOT EXISTS public_world_info (
-    round_id INTEGER PRIMARY KEY,
-    content TEXT NOT NULL,
-    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (round_id) REFERENCES rounds(round_number)
 );
 
@@ -86,26 +79,37 @@ CREATE TABLE IF NOT EXISTS game_metadata (
 # the foreign keys stay consistent during rollback / retry.
 _ROUND_TABLES = (
     ("chat_messages", "round_number"),
-    ("player_views", "round_id"),
-    ("player_statusbars", "round_id"),
-    ("public_world_info", "round_id"),
+    ("character_views", "round_id"),
+    ("character_statuses", "round_id"),
     ("round_actions", "round_id"),
 )
+
+
+def _round_tables(connection: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
+    """Also clear historical public-info rows when rolling back an old save."""
+    legacy = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'public_world_info'"
+    ).fetchone()
+    return _ROUND_TABLES + (("public_world_info", "round_id"),) if legacy else _ROUND_TABLES
 
 
 class Database:
     """Small SQLite wrapper; blocking work is moved off the asyncio event loop."""
 
     def __init__(
-        self, path: str, role_ids: tuple[str, ...] = ("P1", "P2")
+        self, path: str, role_ids: tuple[str, ...] = ("P1", "P2"),
+        status_roles: tuple[str, ...] | None = None,
     ) -> None:
         if not role_ids or len(set(role_ids)) != len(role_ids):
             raise ValueError("role ids must be non-empty and unique")
         self.path = Path(path)
         self.role_ids = tuple(role_ids)
+        self.status_roles = tuple(role_ids if status_roles is None else status_roles)
+        if not set(self.status_roles) <= set(self.role_ids):
+            raise ValueError("status roles must be valid role ids")
 
-    async def initialize(self, initial_world_state=None, initial_statusbars=None) -> None:
-        await asyncio.to_thread(self._initialize_sync, initial_world_state, initial_statusbars)
+    async def initialize(self, initial_world_state=None, initial_character_statuses=None) -> None:
+        await asyncio.to_thread(self._initialize_sync, initial_world_state, initial_character_statuses)
 
     async def current_round(self) -> int:
         return await asyncio.to_thread(self._current_round_sync)
@@ -128,8 +132,8 @@ class Database:
     async def get_role_history(self, player_id: str) -> list[dict]:
         return await asyncio.to_thread(self._get_role_history_sync, player_id)
 
-    async def get_latest_player_view(self, player_id: str):
-        return await asyncio.to_thread(self._get_latest_player_view_sync, player_id)
+    async def export_history(self) -> dict:
+        return await asyncio.to_thread(self._export_history_sync)
 
     async def get_world_state(self) -> str:
         return await asyncio.to_thread(self._get_world_state_sync)
@@ -142,9 +146,6 @@ class Database:
     async def lock_round_actions(self, completed: CompletedRound) -> None:
         """Persist submitted actions before the first AI request can fail."""
         await asyncio.to_thread(self._lock_round_actions_sync, completed)
-
-    async def save_player_views(self, round_id: int, views: dict[str, str]) -> None:
-        await asyncio.to_thread(self._save_player_views_sync, round_id, views)
 
     async def get_narrator_history(
         self, player_id: str, rounds: int
@@ -189,7 +190,8 @@ class Database:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(self.path, timeout=5.0)
+        connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA foreign_keys = ON")
         try:
             with connection:
@@ -197,9 +199,22 @@ class Database:
         finally:
             connection.close()
 
-    def _initialize_sync(self, initial_world_state=None, initial_statusbars=None) -> None:
+    def _initialize_sync(self, initial_world_state=None, initial_character_statuses=None) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
+            existing = {row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )}
+            if "player_views" in existing and "character_views" not in existing:
+                connection.execute("ALTER TABLE player_views RENAME TO character_views")
+                connection.execute("ALTER TABLE character_views RENAME COLUMN view_content TO character_view_content")
+            if "player_statusbars" in existing and "character_statuses" not in existing:
+                connection.execute("ALTER TABLE player_statusbars RENAME TO character_statuses")
+            if "players" in existing:
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(players)")}
+                if "statusbar_content" in columns and "character_status_content" not in columns:
+                    connection.execute("ALTER TABLE players RENAME COLUMN statusbar_content TO character_status_content")
             connection.executescript(SCHEMA)
             self._validate_schema(connection)
             connection.executemany(
@@ -213,13 +228,13 @@ class Database:
                 raise RuntimeError(
                     "database roles do not match metadata.json; recreate this game instance"
                 )
-            if initial_statusbars:
+            if initial_character_statuses:
                 connection.executemany(
-                    """UPDATE players SET statusbar_content = ?
-                       WHERE player_id = ? AND statusbar_content = '{}'""",
+                    """UPDATE players SET character_status_content = ?
+                       WHERE player_id = ? AND (character_status_content IS NULL OR character_status_content = '{}')""",
                     (
-                        (self._as_text(initial_statusbars[player_id]), player_id)
-                        for player_id in self.role_ids
+                        (self._as_text(initial_character_statuses[player_id]), player_id)
+                        for player_id in self.status_roles
                     ),
                 )
             connection.execute(
@@ -256,11 +271,13 @@ class Database:
 
     def _get_player_display_sync(self, player_id: str) -> dict:
         with self._connect() as connection:
-            statusbar = connection.execute(
-                "SELECT statusbar_content FROM players WHERE player_id = ?", (player_id,)
+            character_status = connection.execute(
+                "SELECT character_status_content FROM players WHERE player_id = ?", (player_id,)
             ).fetchone()
         return {
-            "statusbar": self._parse_content(statusbar[0]) if statusbar else {},
+            "character_status": self._parse_content(character_status[0])
+            if player_id in self.status_roles and character_status and character_status[0] is not None
+            else None,
         }
 
     @staticmethod
@@ -280,28 +297,25 @@ class Database:
             if row is None:
                 return None
             round_id, world_state = row
-            public = connection.execute(
-                "SELECT content FROM public_world_info WHERE round_id = ?", (round_id,)
-            ).fetchone()
             views = dict(connection.execute(
-                "SELECT player_id, view_content FROM player_views WHERE round_id = ?",
+                "SELECT player_id, character_view_content FROM character_views WHERE round_id = ?",
                 (round_id,),
             ).fetchall())
-            statusbars = dict(connection.execute(
-                "SELECT player_id, statusbar_content FROM players"
+            character_statuses = dict(connection.execute(
+                "SELECT player_id, character_status_content FROM players"
             ).fetchall())
         return {
             "round": round_id,
             "result": {
                 "world_state": self._parse_content(world_state),
-                "public_information": self._parse_content(public[0]) if public else {},
-                "player_views": {
+                "character_views": {
                     player_id: self._parse_content(content)
                     for player_id, content in views.items()
                 },
-                "player_statusbar": {
-                    player_id: self._parse_content(content)
-                    for player_id, content in statusbars.items()
+                "character_status": {
+                    player_id: self._parse_content(character_statuses[player_id])
+                    for player_id in self.status_roles
+                    if character_statuses.get(player_id) is not None
                 },
             },
         }
@@ -317,19 +331,19 @@ class Database:
                    ORDER BY chat_messages.round_number, chat_messages.id""",
                 (player_id,),
             ).fetchall()
-            statusbars = dict(connection.execute(
-                """SELECT player_statusbars.round_id, player_statusbars.content
-                   FROM player_statusbars
-                   JOIN rounds ON rounds.round_number = player_statusbars.round_id
-                   WHERE player_statusbars.player_id = ? AND rounds.status = 'COMPLETED'
-                   ORDER BY player_statusbars.round_id""",
+            character_statuses = dict(connection.execute(
+                """SELECT character_statuses.round_id, character_statuses.content
+                   FROM character_statuses
+                   JOIN rounds ON rounds.round_number = character_statuses.round_id
+                   WHERE character_statuses.player_id = ? AND rounds.status = 'COMPLETED'
+                   ORDER BY character_statuses.round_id""",
                 (player_id,),
             ).fetchall())
         by_round: dict[int, dict[str, str]] = {}
         for round_id, role, content in messages:
             by_round.setdefault(round_id, {})[role] = content
         history = []
-        for round_id in sorted(set(by_round) | set(statusbars)):
+        for round_id in sorted(set(by_round) | set(character_statuses)):
             round_messages = by_round.get(round_id, {})
             if "player" in round_messages:
                 history.append({
@@ -343,22 +357,79 @@ class Database:
                     "kind": "narration",
                     "content": round_messages["narrator"],
                 })
-            if round_id in statusbars:
+            if round_id in character_statuses:
                 history.append({
                     "round": round_id,
-                    "kind": "statusbar",
-                    "content": self._parse_content(statusbars[round_id]),
+                    "kind": "character_status",
+                    "content": self._parse_content(character_statuses[round_id]),
                 })
         return history
 
-    def _get_latest_player_view_sync(self, player_id: str):
+    def _export_history_sync(self) -> dict:
+        """A consistent snapshot of completed story rounds for the owner export."""
+        if not self.path.is_file():
+            raise ValueError("game_history_unavailable")
         with self._connect() as connection:
-            row = connection.execute(
-                """SELECT view_content FROM player_views
-                   WHERE player_id = ? ORDER BY round_id DESC LIMIT 1""",
-                (player_id,),
+            connection.execute("BEGIN")
+            processing = connection.execute(
+                "SELECT 1 FROM players WHERE status = 'PROCESSING' LIMIT 1"
             ).fetchone()
-        return self._parse_content(row[0]) if row else None
+            processing_round = connection.execute(
+                """SELECT 1 FROM rounds WHERE status = 'OPEN'
+                   AND stage NOT IN ('WAITING_INPUT', 'FINISHED') LIMIT 1"""
+            ).fetchone()
+            if processing or processing_round:
+                raise ValueError("game_processing")
+            initial = connection.execute(
+                "SELECT value FROM game_metadata WHERE key = 'initial_world_state'"
+            ).fetchone()
+            current = connection.execute(
+                "SELECT content FROM world_state WHERE id = 1"
+            ).fetchone()
+            rows = connection.execute(
+                """SELECT round_number, result_world_state, completed_at FROM rounds
+                   WHERE status = 'COMPLETED' ORDER BY round_number"""
+            ).fetchall()
+            rounds = {
+                number: {
+                    "round": number,
+                    "world_state": self._parse_content(world),
+                    "actions": {}, "narrations": {},
+                    "character_views": {}, "character_status": {},
+                    "completed_at": completed_at,
+                }
+                for number, world, completed_at in rows
+            }
+            for number, role_id, content in connection.execute(
+                "SELECT round_id, player_id, content FROM round_actions ORDER BY round_id, player_id"
+            ):
+                if number in rounds:
+                    rounds[number]["actions"][role_id] = content
+            for number, role_id, kind, content in connection.execute(
+                """SELECT round_number, player_id, role, content FROM chat_messages
+                   WHERE role IN ('player', 'narrator') ORDER BY round_number, id"""
+            ):
+                if number in rounds and role_id is not None:
+                    key = "actions" if kind == "player" else "narrations"
+                    if key == "actions":
+                        rounds[number][key].setdefault(role_id, content)
+                    else:
+                        rounds[number][key][role_id] = content
+            for number, role_id, content in connection.execute(
+                "SELECT round_id, player_id, character_view_content FROM character_views"
+            ):
+                if number in rounds:
+                    rounds[number]["character_views"][role_id] = self._parse_content(content)
+            for number, role_id, content in connection.execute(
+                "SELECT round_id, player_id, content FROM character_statuses"
+            ):
+                if number in rounds:
+                    rounds[number]["character_status"][role_id] = self._parse_content(content)
+        return {
+            "initial_world_state": self._parse_content(initial[0]) if initial else None,
+            "current_world_state": self._parse_content(current[0]) if current else None,
+            "rounds": list(rounds.values()),
+        }
 
     def _current_round_sync(self) -> int:
         with self._connect() as connection:
@@ -405,12 +476,9 @@ class Database:
             ).fetchone()
             if row is None:
                 raise RuntimeError(f"round {round_id} does not exist")
-            public_row = connection.execute(
-                "SELECT content FROM public_world_info WHERE round_id = ?", (round_id,)
-            ).fetchone()
             views = dict(
                 connection.execute(
-                    "SELECT player_id, view_content FROM player_views WHERE round_id = ?",
+                    "SELECT player_id, character_view_content FROM character_views WHERE round_id = ?",
                     (round_id,),
                 ).fetchall()
             )
@@ -446,8 +514,10 @@ class Database:
             "locked": bool(saved_actions),
             "players": players,
             "world_state": row[1],
-            "public_world_info": public_row[0] if public_row else None,
-            "player_views": views,
+            "character_views": {
+                role_id: self._parse_content(content)
+                for role_id, content in views.items()
+            },
             "narrations": narrations,
         }
 
@@ -492,37 +562,30 @@ class Database:
                     for role_id in self.role_ids
                 ),
             )
-            connection.execute(
-                """INSERT INTO public_world_info (round_id, content)
-                   VALUES (?, ?)
-                   ON CONFLICT(round_id) DO UPDATE SET
-                       content = excluded.content, timestamp = CURRENT_TIMESTAMP""",
-                (completed.round_number, self._as_text(result["public_information"])),
-            )
             connection.executemany(
-                """INSERT INTO player_views (round_id, player_id, view_content)
+                """INSERT INTO character_views (round_id, player_id, character_view_content)
                    VALUES (?, ?, ?)
                    ON CONFLICT(round_id, player_id) DO UPDATE SET
-                       view_content = excluded.view_content,
+                       character_view_content = excluded.character_view_content,
                        timestamp = CURRENT_TIMESTAMP""",
                 (
                     (
                         completed.round_number,
                         player_id,
-                        self._as_text(result["player_views"][player_id]),
+                        self._as_text(result["character_views"][player_id]),
                     )
                     for player_id in self.role_ids
                 ),
             )
             connection.executemany(
-                "UPDATE players SET statusbar_content = ? WHERE player_id = ?",
+                "UPDATE players SET character_status_content = ? WHERE player_id = ?",
                 (
-                    (self._as_text(result["player_statusbar"][player_id]), player_id)
-                    for player_id in self.role_ids
+                    (self._as_text(result["character_status"][player_id]), player_id)
+                    for player_id in self.status_roles
                 ),
             )
             connection.executemany(
-                """INSERT INTO player_statusbars (round_id, player_id, content)
+                """INSERT INTO character_statuses (round_id, player_id, content)
                    VALUES (?, ?, ?)
                    ON CONFLICT(round_id, player_id) DO UPDATE SET
                        content = excluded.content,
@@ -531,9 +594,9 @@ class Database:
                     (
                         completed.round_number,
                         player_id,
-                        self._as_text(result["player_statusbar"][player_id]),
+                        self._as_text(result["character_status"][player_id]),
                     )
-                    for player_id in self.role_ids
+                    for player_id in self.status_roles
                 ),
             )
             connection.execute(
@@ -546,17 +609,6 @@ class Database:
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
-
-    def _save_player_views_sync(self, round_id: int, views: dict[str, str]) -> None:
-        with self._connect() as connection:
-            connection.executemany(
-                """INSERT INTO player_views (round_id, player_id, view_content)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(round_id, player_id) DO UPDATE SET
-                       view_content = excluded.view_content,
-                       timestamp = CURRENT_TIMESTAMP""",
-                ((round_id, player_id, content) for player_id, content in views.items()),
-            )
 
     def _get_narrator_history_sync(
         self, player_id: str, rounds: int
@@ -690,7 +742,7 @@ class Database:
     def _delete_rounds_after_sync(
         connection: sqlite3.Connection, keep_round: int
     ) -> None:
-        for table, column in _ROUND_TABLES:
+        for table, column in _round_tables(connection):
             connection.execute(
                 f"DELETE FROM {table} WHERE {column} IN "
                 "(SELECT round_number FROM rounds WHERE round_number > ?)",
@@ -739,7 +791,7 @@ class Database:
                 )
             base_world = self._base_world_state_sync(connection, round_number)
             self._delete_rounds_after_sync(connection, round_number)
-            for table, column in _ROUND_TABLES:
+            for table, column in _round_tables(connection):
                 connection.execute(
                     f"DELETE FROM {table} WHERE {column} = ?", (round_number,)
                 )

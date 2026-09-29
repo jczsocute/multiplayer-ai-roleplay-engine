@@ -22,6 +22,11 @@ class PlatformDatabaseTests(unittest.TestCase):
         self.alice = self.database.create_user("Alice", "password123")
         self.bob = self.database.create_user("Bob", "password123")
 
+    def test_sqlite_connections_use_busy_timeout_and_wal(self) -> None:
+        with self.database._connect() as connection:
+            self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
+            self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
     def test_template_visibility_and_ownership(self) -> None:
         own = self.database.create_template("tmpl_OWN", self.alice.id, "Own")
         public = self.database.create_template(

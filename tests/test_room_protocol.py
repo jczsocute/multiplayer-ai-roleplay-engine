@@ -27,7 +27,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
-            server = GameServer(database, None, None, None, owner_user_id=1)
+            server = GameServer(database, None, None, owner_user_id=1)
             socket = FakeConnection()
             await server.sessions.join(ALICE, socket)
             for message, code in (
@@ -63,7 +63,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
             server = GameServer(
-                database, None, None, None,
+                database, None, None,
                 character_names={"P1": "林岚", "P2": "周砚"},
                 owner_user_id=1,
             )
@@ -118,7 +118,7 @@ class RoomProtocolTests(unittest.IsolatedAsyncioTestCase):
             database = Database(str(Path(directory) / "game.db"))
             await database.initialize()
             server = GameServer(
-                database, None, None, None,
+                database, None, None,
                 character_names={"P1": "林岚", "P2": "周砚"},
                 owner_user_id=1,
             )

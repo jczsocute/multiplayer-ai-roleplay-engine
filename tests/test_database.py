@@ -24,9 +24,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 completed,
                 {
                     "world_state": {"gate": "open"},
-                    "public_information": {"time": "morning"},
-                    "player_views": {"P1": {"gate": "visible"}, "P2": {"fog": True}},
-                    "player_statusbar": {"P1": {"hp": 100}, "P2": {"hp": 90}},
+                    "character_views": {"P1": {"gate": "visible"}, "P2": {"fog": True}},
+                    "character_status": {"P1": {"hp": 100}, "P2": {"hp": 90}},
                 },
             )
             narrations = {
@@ -44,10 +43,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             latest = await database.get_latest_world_update()
             self.assertEqual(latest["round"], 1)
             self.assertEqual(latest["result"]["world_state"], {"gate": "open"})
-            self.assertEqual(latest["result"]["player_statusbar"]["P2"], {"hp": 90})
+            self.assertEqual(latest["result"]["character_status"]["P2"], {"hp": 90})
             self.assertEqual(
                 [item["kind"] for item in await database.get_role_history("P1")],
-                ["action", "narration", "statusbar"],
+                ["action", "narration", "character_status"],
             )
 
             with sqlite3.connect(path) as connection:
@@ -63,9 +62,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                         "rounds",
                         "chat_messages",
                         "world_state",
-                        "player_views",
-                        "public_world_info",
-                        "player_statusbars",
+                        "character_views",
+                        "character_statuses",
                     }
                     <= tables
                 )
@@ -80,12 +78,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     connection.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0], 4
                 )
                 self.assertEqual(
-                    connection.execute("SELECT COUNT(*) FROM player_views").fetchone()[0], 2
+                    connection.execute("SELECT COUNT(*) FROM character_views").fetchone()[0], 2
                 )
-                self.assertEqual(
-                    connection.execute("SELECT content FROM public_world_info").fetchone()[0],
-                    '{"time": "morning"}',
-                )
+                self.assertNotIn("public_world_info", tables)
 
     async def test_narrator_history_uses_whole_recent_rounds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -93,9 +88,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             await database.initialize()
             result = {
                 "world_state": {"tick": 0},
-                "public_information": {},
-                "player_views": {"P1": {}, "P2": {}},
-                "player_statusbar": {"P1": {}, "P2": {}},
+                "character_views": {"P1": {}, "P2": {}},
+                "character_status": {"P1": {}, "P2": {}},
             }
             for round_id in (1, 2, 3):
                 completed = CompletedRound(

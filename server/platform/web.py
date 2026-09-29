@@ -10,7 +10,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketState
@@ -26,8 +26,13 @@ from server.platform.catalog import (
     set_template_public_owned,
 )
 from server.platform.database import PlatformDatabase
+from server.platform.game_history import export_game_history
 from server.platform.models import AuthenticatedUser
 from server.platform.room_manager import RoomManager
+from server.platform.template_editor import read_template_editor, save_template_editor
+from server.platform.template_zip import (
+    MAX_ZIP_BYTES, export_template_zip, import_template_zip,
+)
 from server.platform.websocket_adapter import DISCONNECTS, WebSocketConnection
 from server.platform.security import is_loopback_host, origin_allowed
 
@@ -196,6 +201,66 @@ def create_platform_app(
         values = await asyncio.to_thread(database.list_user_templates, user.id)
         return JSONResponse({"templates": template_rows(user.id, values)})
 
+    async def template_editor(request: Request) -> JSONResponse:
+        user = await resolve_user(request)
+        if user is None:
+            return _api_error("unauthenticated", 401)
+        template_id = request.path_params["template_id"]
+        try:
+            if request.method == "GET":
+                result = await asyncio.to_thread(
+                    read_template_editor, database, Path(room_manager.templates_dir),
+                    template_id, user.id,
+                )
+            else:
+                body = await request.json()
+                result = await asyncio.to_thread(
+                    save_template_editor, database, Path(room_manager.templates_dir),
+                    template_id, user.id, body, min_role_count, max_role_count,
+                )
+        except PermissionError as exc:
+            return _api_error(str(exc), 403)
+        except (ValueError, OSError) as exc:
+            code = str(exc) if str(exc) in {
+                "template_not_found", "invalid_template_name", "invalid_role_count",
+                "invalid_editor_content",
+            } else "invalid_editor_content"
+            return _api_error(code, _not_found(code) or 400)
+        return JSONResponse(result)
+
+    async def template_zip(request: Request) -> Response:
+        user = await resolve_user(request)
+        if user is None:
+            return _api_error("unauthenticated", 401)
+        template_id = request.path_params.get("template_id")
+        try:
+            if request.method == "GET":
+                data = await asyncio.to_thread(
+                    export_template_zip, database, Path(room_manager.templates_dir),
+                    template_id, user.id,
+                )
+                return Response(data, media_type="application/zip", headers={
+                    "Content-Disposition": f'attachment; filename="{template_id}.zip"',
+                    "Cache-Control": "no-store",
+                })
+            chunks = bytearray()
+            async for chunk in request.stream():
+                chunks.extend(chunk)
+                if len(chunks) > MAX_ZIP_BYTES:
+                    raise ValueError("template_zip_too_large")
+            record = await asyncio.to_thread(
+                import_template_zip, database, Path(room_manager.templates_dir),
+                user.id, bytes(chunks), min_role_count, max_role_count, template_id,
+            )
+        except PermissionError as exc:
+            return _api_error(str(exc), 403)
+        except (ValueError, OSError) as exc:
+            code = str(exc) if str(exc) in {
+                "template_not_found", "invalid_template_zip", "template_zip_too_large",
+            } else "invalid_template_zip"
+            return _api_error(code, _not_found(code) or 400)
+        return JSONResponse(template_rows(user.id, [record])[0], status_code=201 if template_id is None else 200)
+
     async def create_template(request: Request) -> JSONResponse:
         user = await resolve_user(request)
         if user is None:
@@ -341,6 +406,30 @@ def create_platform_app(
             return _api_error(str(exc), status)
         return JSONResponse({"ok": True})
 
+    async def history_zip(request: Request) -> Response:
+        user = await resolve_user(request)
+        if user is None:
+            return _api_error("unauthenticated", 401)
+        game_id = request.path_params.get("game_id")
+        if game_id is None:
+            room = await asyncio.to_thread(database.get_room, request.path_params["code"])
+            if room is None:
+                return _api_error("room_not_found", 404)
+            if room.owner_user_id != user.id:
+                return _api_error("forbidden", 403)
+            game_id = room.game_id
+        try:
+            data = await export_game_history(database, room_manager, game_id, user.id)
+        except PermissionError as exc:
+            return _api_error(str(exc), 403)
+        except ValueError as exc:
+            code = str(exc)
+            return _api_error(code, 409 if code == "game_processing" else _not_found(code) or 400)
+        return Response(data, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{game_id}-history.zip"',
+            "Cache-Control": "no-store",
+        })
+
     async def rooms(request: Request) -> JSONResponse:
         user = await resolve_user(request)
         if user is None:
@@ -362,7 +451,7 @@ def create_platform_app(
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         code = room_manager.user_current_room(user.id)
         failed = next(
-            (room.code for room in database.list_rooms()
+            (room.code for room in await asyncio.to_thread(database.list_rooms)
              if room.owner_user_id == user.id and room_manager.get_runtime(room.code) is None),
             None,
         )
@@ -479,6 +568,7 @@ def create_platform_app(
             "min_role_count": min_role_count,
             "max_role_count": max_role_count,
             "max_room_users": room_manager.max_users,
+            "room_disconnect_timeout_seconds": room_manager.disconnect_timeout_seconds,
         })
 
     async def admin_websocket(websocket: WebSocket) -> None:
@@ -537,6 +627,9 @@ def create_platform_app(
         Route("/api/me", me, methods=["GET"]),
         Route("/api/templates/mine", my_templates, methods=["GET"]),
         Route("/api/templates/public", public_templates, methods=["GET"]),
+        Route("/api/templates/import-zip", template_zip, methods=["POST"]),
+        Route("/api/templates/{template_id}/zip", template_zip, methods=["GET", "PUT"]),
+        Route("/api/templates/{template_id}/editor", template_editor, methods=["GET", "PUT"]),
         Route("/api/templates/{template_id}", template_detail, methods=["GET"]),
         Route("/api/templates", templates, methods=["GET"]),
         Route("/api/templates", create_template, methods=["POST"]),
@@ -547,12 +640,14 @@ def create_platform_app(
         Route("/api/games/{game_id}", patch_game, methods=["PATCH"]),
         Route("/api/games/{game_id}", delete_own_game, methods=["DELETE"]),
         Route("/api/games/{game_id}/copy", copy_own_game, methods=["POST"]),
+        Route("/api/games/{game_id}/history.zip", history_zip, methods=["GET"]),
         Route("/api/rooms", rooms, methods=["GET"]),
         Route("/api/rooms", create_room, methods=["POST"]),
         Route("/api/rooms/current", current_room, methods=["GET"]),
         Route("/api/rooms/{code}", room_detail, methods=["GET"]),
         Route("/api/rooms/{code}", close_room, methods=["DELETE"]),
         Route("/api/rooms/{code}/leave", leave_room, methods=["POST"]),
+        Route("/api/rooms/{code}/history.zip", history_zip, methods=["GET"]),
         WebSocketRoute("/ws", game_websocket),
         WebSocketRoute("/admin/ws", admin_websocket),
         Route("/ui-config.json", ui_config, methods=["GET"]),
@@ -601,6 +696,12 @@ def _api_error(code: str, status: int) -> JSONResponse:
         "user_not_in_room": "该用户已不在房间中",
         "invalid_game_name": "存档名称无效",
         "invalid_template_name": "剧本名称无效",
+        "invalid_editor_content": "剧本编辑内容无效",
+        "invalid_role_count": "角色数量不在当前服务器允许范围内",
+        "invalid_template_zip": "ZIP 剧本格式或内容无效",
+        "template_zip_too_large": "ZIP 剧本超过大小限制",
+        "game_processing": "请等待本轮完成……",
+        "game_history_unavailable": "存档历史暂时无法导出",
     }
     return JSONResponse(
         {"error": code, "detail": details.get(code, code)}, status_code=status

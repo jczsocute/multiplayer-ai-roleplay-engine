@@ -113,10 +113,6 @@ export function renamePrompt(kind: "存档" | "剧本", name: string): string {
   return `请输入新的${kind}名称（当前：${name}）`;
 }
 
-export function templateEditorMessage(): string {
-  return "TODO：剧本在线编辑功能尚未完成";
-}
-
 export function newTemplatePayload(name: string, roleCount: number): {
   name: string;
   role_count: number;

@@ -58,7 +58,7 @@ class TemplateManagementTests(unittest.TestCase):
             )
             # A playable payload exists and is a *new* directory, not a copy of
             # love_story or an existing template.
-            self.assertTrue((self.payload(metadata.id) / "world" / "initial_state.json").is_file())
+            self.assertTrue((self.payload(metadata.id) / "world" / "world_state_initial.json").is_file())
             self.assertNotEqual(metadata.id, self.mine.id)
 
     def test_create_rejects_invalid_names_and_role_counts(self) -> None:

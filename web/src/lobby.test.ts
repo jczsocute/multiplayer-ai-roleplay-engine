@@ -5,7 +5,7 @@ import {
   LOBBY_TITLE, MAX_LOBBY_ROWS, copyConfirmation, deleteConfirmation, formatLocalTime,
   isOwnTemplate, newTemplatePayload, ownTemplates, pickRandom, renamePrompt,
   roomGameName, roomIsFull, roomLabel, roomOccupancy, sortedByUpdated,
-  templateDetailLine, templateEditorMessage, templateMeta, templateOwnerLabel,
+  templateDetailLine, templateMeta, templateOwnerLabel,
   templateRoleCount, toggledRow, visibilityToggleLabel,
 } from "./lobby";
 import type { GameItem, RoomItem, TemplateItem } from "./types";
@@ -123,17 +123,12 @@ describe("resource rows", () => {
   });
 });
 
-describe("confirmations and the editor placeholder", () => {
+describe("confirmations", () => {
   it("asks before copying and deleting", () => {
     expect(copyConfirmation("存档", "love_story")).toContain("love_story");
     expect(deleteConfirmation("剧本", "我的故事", "已用它创建的存档不受影响。"))
       .toContain("已用它创建的存档不受影响。");
     expect(renamePrompt("存档", "love_story")).toContain("love_story");
-  });
-
-  it("keeps the template editor as an explicit TODO", () => {
-    expect(templateEditorMessage()).toContain("TODO");
-    expect(templateEditorMessage()).toContain("尚未完成");
   });
 
   it("trims the new-template payload and keeps the role count", () => {

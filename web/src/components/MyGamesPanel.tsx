@@ -12,11 +12,12 @@ type Props = {
   onLoad: (game: GameItem) => void;
   onRename: (game: GameItem, name: string) => void;
   onCopy: (game: GameItem) => void;
+  onExportHistory: (game: GameItem) => void;
   onDelete: (game: GameItem) => void;
 };
 
 /** 我的存档: compact rows, newest update first, expanding into an action row. */
-export function MyGamesPanel({ games, busy, error, onLoad, onRename, onCopy, onDelete }: Props) {
+export function MyGamesPanel({ games, busy, error, onLoad, onRename, onCopy, onDelete, onExportHistory }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const sorted = useMemo(() => sortedByUpdated(games), [games]);
 
@@ -44,6 +45,7 @@ export function MyGamesPanel({ games, busy, error, onLoad, onRename, onCopy, onD
         <button className="secondary" onClick={() => {
           if (window.confirm(copyConfirmation("存档", game.name))) onCopy(game);
         }}>复制</button>
+        <button className="secondary" onClick={() => onExportHistory(game)}>导出世界信息</button>
         <button className="danger" onClick={() => {
           if (window.confirm(deleteConfirmation("存档", game.name, "存档内容会被删除。"))) {
             onDelete(game);

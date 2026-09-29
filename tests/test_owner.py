@@ -45,7 +45,7 @@ class GameOwnerTests(unittest.IsolatedAsyncioTestCase):
         database = Database(str(Path(directory.name) / "game.db"))
         await database.initialize()
         return GameServer(
-            database, None, None, None,
+            database, None, None,
             room_key="test-key", owner_user_id=owner_user_id,
         )
 
