@@ -27,7 +27,7 @@ AI RP Engine is a lightweight, self-hosted multiplayer AI role-playing platform.
 - **Self-hosted operation:** uses an OpenAI-compatible LLM endpoint, SQLite, and a local-only Admin console for platform management.
 
 <p align="center">
-  <img src="docs/images/host-controls.webp" width="850" alt="Host controls for room members, roles, retry, and rollback" />
+  <img src="docs/images/host-controls.webp" width="30%" alt="Host controls for room members, roles, retry, and rollback" />
 </p>
 
 <p align="center"><sub>Host controls</sub></p>

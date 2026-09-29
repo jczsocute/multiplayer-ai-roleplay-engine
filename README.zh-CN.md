@@ -27,7 +27,7 @@ AI RP Engine 是轻量级、可自行部署的多人 AI 角色扮演平台。多
 - **自行部署**：使用兼容 OpenAI API 的 LLM 服务、SQLite 和仅供本机使用的平台 Admin 控制台。
 
 <p align="center">
-  <img src="docs/images/host-controls.webp" width="850" alt="房间成员、角色分配、重试和回滚管理界面" />
+  <img src="docs/images/host-controls.webp" width="30%" alt="房间成员、角色分配、重试和回滚管理界面" />
 </p>
 
 <p align="center"><sub>房主管理</sub></p>
