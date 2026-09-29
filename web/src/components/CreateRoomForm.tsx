@@ -51,11 +51,15 @@ export function CreateRoomForm({ games, templates, preset, busy, error, onSubmit
       <input type="radio" checked={source === "template"} onChange={() => setSource("template")} /> 从剧本开始
     </label>
     <select disabled={source !== "template"} value={templateId}
-      onChange={(event) => setTemplateId(event.target.value)}>
+      onChange={(event) => {
+        const id = event.target.value;
+        setTemplateId(id);
+        setGameName(templates.find((template) => template.id === id)?.name ?? "");
+      }}>
       <option value="">选择剧本</option>
       {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
     </select>
-    {source === "template" && <input placeholder="存档名称（可选）" value={gameName}
+    {source === "template" && <input placeholder="存档名称（默认与剧本同名）" value={gameName}
       onChange={(event) => setGameName(event.target.value)} />}
 
     <input placeholder="房间密码（可选，字母/数字/_）" maxLength={32} value={password}

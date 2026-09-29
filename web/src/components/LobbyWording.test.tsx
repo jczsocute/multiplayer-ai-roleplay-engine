@@ -54,7 +54,7 @@ describe("user-facing Template wording", () => {
       connected_count: 9, occupancy: 10, max_users: 10, has_password: true,
     };
     const html = home([template], [template], room);
-    expect(html).toContain("你当前仍在Bob 的房间");
+    expect(html).toContain("你当前仍在Save_A");
     expect(html).toContain("返回房间");
     expect(html).toContain("离开房间");
     expect(html).not.toContain("已满</button>");

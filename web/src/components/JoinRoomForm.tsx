@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { normalizeRoomCode, roomNeedsPassword } from "../platform";
-import { roomGameName, roomIsFull, roomLabel, roomOccupancy } from "../lobby";
+import { roomIsFull, roomLabel, roomOccupancy } from "../lobby";
 import type { RoomItem } from "../types";
 
 type Props = {
@@ -61,7 +61,7 @@ export function JoinRoomForm({
         <strong>{roomLabel(room)}</strong>
         <span className="muted">
           {roomOccupancy(room)} 人{room.has_password ? " · 🔒" : ""}
-          {roomGameName(room) ? ` · ${roomGameName(room)}` : ""}
+          {" · 房间码 "}{room.code}{" · 房主 "}{room.owner_username}
         </span>
       </div>
       {roomNeedsPassword(room) && currentRoomCode !== room.code && <input type="password" placeholder="房间密码" value={password}

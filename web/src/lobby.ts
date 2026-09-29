@@ -33,20 +33,19 @@ export function formatLocalTime(iso: string | null | undefined): string {
     `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** Rooms are named after their owner, never after an internal game id. */
+/** Show the save name and its short identifier; the join code is shown separately. */
 export function roomLabel(room: RoomItem): string {
-  const owner = room.owner_username?.trim();
-  return owner ? `${owner} 的房间` : "房间";
+  if (room.display_name) return room.display_name;
+  const name = room.game_name?.trim();
+  if (!name) return "房间";
+  const suffix = room.game_id?.replace(/^game_/, "");
+  return suffix ? `${name}_${suffix}` : name;
 }
 
 export function roomOccupancy(room: RoomItem): string {
   const max = room.max_users || 10;
   const seats = room.occupancy ?? room.connected_count ?? 0;
   return `${seats}/${max}`;
-}
-
-export function roomGameName(room: RoomItem): string {
-  return room.game_name && room.game_name !== room.code ? room.game_name : "";
 }
 
 export function roomIsFull(room: RoomItem, currentRoomCode?: string): boolean {

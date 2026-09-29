@@ -29,6 +29,7 @@ export type RoomItem = {
   code: string;
   game_id: string;
   game_name: string;
+  display_name?: string;
   owner_username: string;
   owner_user_id: number;
   role_count: number;

@@ -113,6 +113,8 @@ DELETE /api/rooms/<code>
 创建接口接受 `source=game` 或 `source=template`。Template 来源先创建归当前用户
 所有的长期 Game 快照，再激活为 Room。关闭接口只允许 owner，且只删除 Room
 metadata/Runtime，不删除 Game。未登录访问资源 API 返回 401。
+从剧本创建时，未自定义存档名则使用剧本名称。大厅与房间内标题显示存档名称加
+Game ID 的短后缀（如 `石头剪刀布_6LQFHV`）；用于加入的 Room Code 另行显示。
 创建前检查房主、剧本权限和当前角色数；若快照后建房失败，只删除本次新建的存档。
 `GET /api/rooms/current` 用进程内 membership 帮助刷新后的大厅找回房间；
 已保留座位的同房重连无需再次输入密码。Platform 的显式离房只走 leave API，

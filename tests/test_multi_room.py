@@ -85,6 +85,8 @@ class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
     async def test_two_rooms_have_isolated_state_sessions_and_locks(self) -> None:
         room_a = await self.manager.create_room_from_game(self.alice, self.game_a.id)
         room_b = await self.manager.create_room_from_game(self.bob, self.game_b.id)
+        self.assertEqual(room_a.game_server.scenario_name, "Game A_A")
+        self.assertEqual((await self.manager.public_room(room_a.code))["display_name"], "Game A_A")
         room_a.game_server.rounds.set_action("P1", "A action")
         await room_a.game_server.sessions.join(user(3, "AUser"), FakeConnection())
 
@@ -279,6 +281,19 @@ class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
             await self.manager.create_room_from_template(
                 self.bob, private.id, "Forbidden", ""
             )
+
+    async def test_template_room_defaults_to_template_name(self) -> None:
+        template = import_template(
+            self.platform, Path("templates/default"), self.root / "templates",
+            self.alice.id, "石头剪刀布",
+        )
+        room = await self.manager.create_room_from_template(self.alice, template.id, "")
+        game = self.platform.get_game(room.game_id)
+        self.assertEqual(game.name, "石头剪刀布")
+        self.assertEqual(
+            room.game_server.scenario_name,
+            f"石头剪刀布_{room.game_id.removeprefix('game_')}",
+        )
 
     async def test_owner_web_command_assigns_roles_by_user_id(self) -> None:
         room = await self.manager.create_room_from_game(self.alice, self.game_a.id)

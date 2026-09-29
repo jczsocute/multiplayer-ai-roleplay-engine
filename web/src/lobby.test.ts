@@ -4,7 +4,7 @@ import { humanizeError } from "./errors";
 import {
   LOBBY_TITLE, MAX_LOBBY_ROWS, copyConfirmation, deleteConfirmation, formatLocalTime,
   isOwnTemplate, newTemplatePayload, ownTemplates, pickRandom, renamePrompt,
-  roomGameName, roomIsFull, roomLabel, roomOccupancy, sortedByUpdated,
+  roomIsFull, roomLabel, roomOccupancy, sortedByUpdated,
   templateDetailLine, templateMeta, templateOwnerLabel,
   templateRoleCount, toggledRow, visibilityToggleLabel,
 } from "./lobby";
@@ -37,9 +37,12 @@ const template = (overrides: Partial<TemplateItem> = {}): TemplateItem => ({
 });
 
 describe("active room rows", () => {
-  it("names a room after its owner, never the game id", () => {
-    expect(roomLabel(room())).toBe("Alice 的房间");
-    expect(roomLabel(room({ owner_username: "" }))).toBe("房间");
+  it("shows the save name with its short id, including server-provided labels", () => {
+    expect(roomLabel(room())).toBe("Save_A");
+    expect(roomLabel(room({ game_name: "石头剪刀布", game_id: "game_6LQFHV" })))
+      .toBe("石头剪刀布_6LQFHV");
+    expect(roomLabel(room({ display_name: "房间标题_6LQFHV" }))).toBe("房间标题_6LQFHV");
+    expect(roomLabel(room({ game_name: "" }))).toBe("房间");
   });
 
   it("shows occupancy against the fixed capacity", () => {
@@ -58,11 +61,6 @@ describe("active room rows", () => {
     expect(roomIsFull(room({ occupancy: 10 }), "K7Q9MX")).toBe(false);
   });
 
-  it("keeps the gamename as secondary text only when it says something", () => {
-    expect(roomGameName(room())).toBe("Save");
-    expect(roomGameName(room({ game_name: "K7Q9MX" }))).toBe("");
-    expect(roomGameName(room({ game_name: "" }))).toBe("");
-  });
 });
 
 describe("resource rows", () => {

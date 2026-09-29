@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  LOBBY_TITLE, MAX_LOBBY_ROWS, mayManageRoom, pickRandom, roomGameName, roomIsFull,
+  LOBBY_TITLE, MAX_LOBBY_ROWS, mayManageRoom, pickRandom, roomIsFull,
   roomLabel, roomOccupancy, templateMeta, templateOwnerLabel,
 } from "../lobby";
 import type { GameItem, RoomItem, TemplateItem } from "../types";
@@ -155,7 +155,7 @@ export function PlatformHome(props: Props) {
             <strong>{roomLabel(room)}</strong>
             <span className="muted">
               {roomOccupancy(room)} 人{room.has_password ? " · 🔒" : ""}
-              {roomGameName(room) ? ` · ${roomGameName(room)}` : ""}
+              {" · 房间码 "}{room.code}{" · 房主 "}{room.owner_username}
             </span>
           </button>
           <div className="row-actions">
@@ -223,14 +223,14 @@ export function PlatformHome(props: Props) {
         onImportZip={props.onImportTemplateZip}
         onExportZip={props.onExportTemplateZip}
         onUse={(template) => { close(); openCreate({
-          source: "template", id: template.id, name: `${template.name} - Game`,
+          source: "template", id: template.id, name: template.name,
         }); }} />
     </OverlayPanel>}
 
     {detail && <OverlayPanel title={detail.name} onClose={closeDetail}>
       <TemplateDetailPanel template={detail}
         onUse={(template) => { close(); openCreate({
-          source: "template", id: template.id, name: `${template.name} - Game`,
+          source: "template", id: template.id, name: template.name,
         }); }} />
     </OverlayPanel>}
   </main>;

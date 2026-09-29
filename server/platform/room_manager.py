@@ -106,7 +106,7 @@ class RoomManager:
             self.templates_dir / template_id,
             min_count=self.min_role_count, max_count=self.max_role_count,
         )
-        name = game_name.strip() or f"{template.name} - Game"
+        name = game_name.strip() or template.name
         game = await asyncio.to_thread(
             create_game_snapshot,
             self.database, template_id, owner.id, name,
@@ -155,11 +155,18 @@ class RoomManager:
             raise ValueError(f"missing game metadata: {room.game_id}")
         path = self.games_dir / room.game_id
         server = await self.game_factory(path, room.owner_user_id)
+        server.scenario_name = self._room_display_name(game.name, game.id)
         # Activity callbacks live here: GameServer never learns about Platform
         # metadata, game ids or room codes.
         server.on_member_left = lambda user_id: self._on_member_left(room.code, user_id)
         server.on_game_changed = lambda: self._touch_game(room.game_id)
         return RoomRuntime(room.code, room.game_id, room.owner_user_id, server)
+
+    @staticmethod
+    def _room_display_name(game_name: str, game_id: str) -> str:
+        # Keep the save identifier visible without exposing its generic game_ prefix.
+        suffix = game_id.removeprefix("game_")
+        return f"{game_name}_{suffix}"
 
     async def _touch_game(self, game_id: str) -> None:
         await asyncio.to_thread(self.database.touch_game, game_id)
@@ -282,6 +289,7 @@ class RoomManager:
             "code": room.code,
             "game_id": room.game_id,
             "game_name": game.name if game else room.game_id,
+            "display_name": self._room_display_name(game.name, game.id) if game else room.game_id,
             "owner_username": owner.username if owner else str(room.owner_user_id),
             "owner_user_id": room.owner_user_id,
             "role_count": len(runtime.game_server.role_ids),
