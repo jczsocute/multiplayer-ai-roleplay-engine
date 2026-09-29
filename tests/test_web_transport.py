@@ -102,6 +102,12 @@ class WebTransportTests(unittest.TestCase):
             self.assertEqual(websocket.receive_json()["type"], "presence")
             self.assertEqual(websocket.receive_json()["type"], "state")
             self.assertEqual(websocket.receive_json()["type"], "room_message")
+            notice = websocket.receive_json()
+            self.assertEqual(notice["type"], "room_message")
+            self.assertEqual(notice["kind"], "system")
+            self.assertEqual(
+                notice["text"], "您目前身份为 <观众>。请等待房主分配角色。"
+            )
 
             websocket.send_json({"type": "view", "role": "P1"})
             role_view = websocket.receive_json()

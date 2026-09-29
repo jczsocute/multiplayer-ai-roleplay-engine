@@ -48,6 +48,14 @@ def resume_message(token: str, room_key: str = KEY) -> str:
     return json.dumps({"type": "resume", "resume_token": token, "room_key": room_key})
 
 
+def identity_notices(connection: ScriptedConnection) -> list[dict]:
+    return [
+        message for message in connection.messages
+        if message.get("type") == "room_message"
+        and message.get("text", "").startswith("您目前")
+    ]
+
+
 ALICE = user(1, "Alice")
 BOB = user(2, "Bob")
 TOM = user(3, "Tom")
@@ -106,7 +114,10 @@ class RoomKeyTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ResumeTests(unittest.IsolatedAsyncioTestCase):
-    async def make_game(self, grace: int = 1) -> GameServer:
+    async def make_game(
+        self, grace: int = 1, owner_user_id: int | None = None,
+        character_names: dict[str, str] | None = None,
+    ) -> GameServer:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         database = Database(str(Path(directory.name) / "game.db"))
@@ -114,6 +125,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         return GameServer(
             database, None, None,
             room_key=KEY, disconnect_grace_seconds=grace,
+            owner_user_id=owner_user_id, character_names=character_names,
         )
 
     async def assign_two_roles(self, game: GameServer):
@@ -123,6 +135,63 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
         await game.sessions.join(BOB, bob)
         await game.sessions.assign_roles({"P1": 1, "P2": 2})
         return alice, bob
+
+    async def test_new_spectator_receives_private_identity_notice(self) -> None:
+        game = await self.make_game()
+        watcher = ScriptedConnection()
+        await game.sessions.join(BOB, watcher)
+
+        connection = ScriptedConnection([join_message()])
+        await game.public_handler(connection, ALICE)
+
+        notices = identity_notices(connection)
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0], {
+            "type": "room_message", "kind": "system", "sender": None,
+            "role": None, "character_name": None,
+            "text": "您目前身份为 <观众>。请等待房主分配角色。",
+        })
+        self.assertEqual(identity_notices(watcher), [])
+        self.assertIn("Alice 已加入房间。", [
+            message.get("text") for message in watcher.messages
+        ])
+        self.assertEqual(await game.database.get_narrator_history("P1", 20), [])
+
+    async def test_role_name_notice_on_rejoin_and_resume(self) -> None:
+        game = await self.make_game(
+            grace=60, character_names={"P1": "路人甲", "P2": "路人乙"},
+        )
+        _alice, bob = await self.assign_two_roles(game)
+        await game.sessions.mark_disconnected(2, bob)
+
+        rejoined = ScriptedConnection([join_message()])
+        await game.public_handler(rejoined, BOB)
+        text = "您目前扮演 <路人乙>。请继续游戏。"
+        self.assertEqual([message["text"] for message in identity_notices(rejoined)], [text])
+        self.assertLess(
+            next(i for i, message in enumerate(rejoined.messages) if message["type"] == "role_view"),
+            next(i for i, message in enumerate(rejoined.messages) if message.get("text") == text),
+        )
+
+        token = game.sessions.users[2].resume_token
+        resumed = ScriptedConnection([resume_message(token)])
+        await game.public_handler(resumed, BOB)
+        self.assertEqual([message["text"] for message in identity_notices(resumed)], [text])
+
+    async def test_host_notice_takes_priority_over_assigned_role(self) -> None:
+        game = await self.make_game(
+            grace=60, owner_user_id=1,
+            character_names={"P1": "路人甲", "P2": "路人乙"},
+        )
+        alice, _bob = await self.assign_two_roles(game)
+        await game.sessions.mark_disconnected(1, alice)
+
+        connection = ScriptedConnection([join_message()])
+        await game.public_handler(connection, ALICE)
+        self.assertEqual(
+            [message["text"] for message in identity_notices(connection)],
+            ["您目前身份为 <房主>。"],
+        )
 
     async def test_disconnect_enters_grace_and_preserves_identity(self) -> None:
         game = await self.make_game()
@@ -170,6 +239,8 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(alice.closed)
         self.assertEqual(alice.messages[-1]["type"], "session_replaced")
+        self.assertEqual(len(identity_notices(replacement)), 1)
+        self.assertEqual(identity_notices(alice), [])
         self.assertEqual(game.sessions.users[1].role, "P1")
         presence = await game.sessions.presence_snapshot()
         self.assertEqual([item["user_id"] for item in presence["users"]].count(1), 1)

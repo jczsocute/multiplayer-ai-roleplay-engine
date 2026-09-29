@@ -16,7 +16,7 @@ from server.gameserver.protocol import (
 )
 from server.gameserver.round_manager import RoundError, RoundManager
 from server.gameserver.roles import RoleConfig
-from server.gameserver.session import AccountIdentity, Connection, JoinResult, Sessions
+from server.gameserver.session import AccountIdentity, Connection, JoinResult, Sessions, User
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -140,6 +140,7 @@ class GameServer:
                         include_draft=participant.role is not None,
                     )
                 await self._announce_join(result)
+                await self._send_identity_notice(participant, websocket)
             else:
                 try:
                     participant = await self.sessions.resume(
@@ -163,6 +164,7 @@ class GameServer:
                 await self._broadcast_room_message(
                     "system", f"{participant.username} 已重新连接。"
                 )
+                await self._send_identity_notice(participant, websocket)
 
             async for raw_message in websocket:
                 await self._handle_command(user_id, websocket, raw_message)
@@ -212,6 +214,19 @@ class GameServer:
         else:
             text = f"{result.user.username} 已重新连接。"
         await self._broadcast_room_message("system", text)
+
+    async def _send_identity_notice(self, participant: User, websocket: Connection) -> None:
+        if self.is_host(participant.user_id):
+            text = "您目前身份为 <房主>。"
+        elif participant.role:
+            name = self.character_names[participant.role]
+            text = f"您目前扮演 <{name}>。请继续游戏。"
+        else:
+            text = "您目前身份为 <观众>。请等待房主分配角色。"
+        await websocket.send(json.dumps({
+            "type": "room_message", "kind": "system", "sender": None,
+            "role": None, "character_name": None, "text": text,
+        }, ensure_ascii=False))
 
     async def _notify_replaced(self, result: JoinResult) -> None:
         """Newest authenticated connection wins; retire the previous one."""
