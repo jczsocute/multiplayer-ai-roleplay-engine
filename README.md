@@ -1,63 +1,119 @@
 # AI RP Engine
 
-轻量级多人 AI 角色扮演平台。用户在 Web 注册、登录并进入大厅，使用剧本创建长期存档，再开启或加入房间。多个房间各自运行独立的 GameServer；关闭房间后存档仍可继续使用。
+<p align="center">
+  English · <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-## 主要能力
+AI RP Engine is a lightweight, self-hosted multiplayer AI role-playing platform. Players join the same persistent story as different characters. The engine maintains a shared world state, then generates narration for each character from the information that character can know.
 
-- Account：稳定用户身份、登录与会话。
-- Platform：剧本、存档和房间的归属、公开目录与管理。
-- 剧本：从 `templates/default/` 创建，也可在 Web 上传、下载符合当前格式的 ZIP；创建存档时复制为独立快照。
-- Room：房间码、可选密码、成员与观众、断线宽限期；多个房间可同时运行。
-- Web：大厅、活跃房间和剧本广场；创建或加入房间、用基础编辑器填写剧本、管理我的存档、分配角色和游玩。
-- Admin：本机 `client/admin.py` 管理用户、剧本与房间。
-- GameServer：动态角色、按角色视角生成叙事、回合恢复、retry 和线性 rollback；存档 owner 可下载完整历史 ZIP。
+<p align="center">
+  <img src="docs/images/lobby-mobile.webp" width="30%" alt="Mobile lobby and room creation" />
+  <img src="docs/images/story-mobile.webp" width="30%" alt="Character story and optional status" />
+  <img src="docs/images/chat-mobile.webp" width="30%" alt="Room chat" />
+</p>
 
-资源关系：`User → 剧本 →（快照）存档 →（激活）Room → GameServer`。用户拥有自己的剧本和存档；公开剧本可供其他用户创建自己的存档。
+<p align="center">
+  <sub>Lobby · Character-specific story · Room chat</sub>
+</p>
 
-## 快速开始
+## Features
 
-需要 Python 3.11+。按需填写 `.env` 中的 LLM 配置；空平台启动本身不要求 LLM key，创建或恢复房间时需要可用的 LLM 配置。
+- **Multiplayer on the Web:** create or join rooms by code, optionally protect them with a password, assign character roles, and let spectators follow the story. Multiple rooms can run at once.
+- **Persistent stories:** a Game Save survives room closure. Members can reconnect during the room's disconnect grace period; a reserved seat is not counted twice.
+- **Dynamic characters:** the current deployment supports 2–4 roles. WorldUpdater advances one shared world and produces private character views and optional character status. Narrator writes a separate story for each role using only that role's information. Internal character views are not shown in the player story UI.
+- **Separate room chat:** conversation and presence stay outside the AI story context and saved narrative history.
+- **Authoring tools:** create and edit scripts in the basic Web Template Editor, or import and export complete Template ZIP files to work on advanced schemas and prompts locally.
+- **Recovery and inspection:** the host can retry a failed AI round or roll back a single linear timeline. Game owners can export completed world states, actions, narration, views, and optional status as a JSON ZIP.
+- **Self-hosted operation:** uses an OpenAI-compatible LLM endpoint, SQLite, and a local-only Admin console for platform management.
+
+<p align="center">
+  <img src="docs/images/host-controls.webp" width="850" alt="Host controls for room members, roles, retry, and rollback" />
+</p>
+
+<p align="center"><sub>Host controls</sub></p>
+
+## How It Works
+
+```text
+User → Template → (snapshot) Game Save → (activated) Room → GameServer
+```
+
+A Template is reusable story content. Creating a Game Save copies its payload, so later Template edits do not change an existing game. A Room activates that save for live play; closing the Room keeps the save. Each active Room has its own GameServer runtime.
+
+```text
+Player actions
+      ↓
+WorldUpdater
+      ↓
+World state + character views / optional status
+      ↓
+Narrator × N
+      ↓
+Character-specific story
+```
+
+The world state is canonical. Each Narrator sees its character sheet, view, optional status, and bounded story history. Players see openings, actions, narration, and any enabled status bar; the generated character view remains an internal Narrator input.
+
+## Quick Start
+
+Python 3.11+ is required. The committed `web/dist/` serves the production client, so Node.js is not needed to run the platform.
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
+# Set LLM_API_KEY in .env to use the configured OpenAI-compatible endpoint.
 python -m server.main
 ```
 
-打开 `http://127.0.0.1:8080/`，注册并登录，在大厅从已有存档或可用剧本创建房间，或用房间码加入。房主在 Web 分配角色。普通部署使用已提交的 `web/dist/`，无需安装 Node.js。
-刷新大厅后，仍在断线宽限期内的成员可通过“返回房间”恢复连接；“离开房间”会立即释放角色和座位。
+Open `http://127.0.0.1:8080/`, register and log in, then create a Room from an available Template or an existing Game Save. The host assigns roles in the Web interface. The platform can start without an LLM key, but creating or recovering a playable Room requires valid LLM configuration. Set `LLM_BASE_URL` and `LLM_MODEL` in `.env` to use another compatible provider.
 
-平台不会自动设置管理员。注册账号后，可在本机执行：
+The platform does not create an administrator automatically. After registering an account, grant it local administration access if needed:
 
 ```bash
-python -m server.main --set-admin <用户名>
+python -m server.main --set-admin <username>
 python client/admin.py
 ```
 
-如需导入本机已有的剧本目录，参见 [Platform 文档](server/platform/README.md)。`templates/default/` 是创建剧本的 scaffold，不是可直接游玩的剧本。新建剧本后会直接打开基础编辑器；也可从“我的剧本”进入编辑页。高级内容可通过剧本 ZIP 下载、修改后再导入。
-玩家故事界面只显示开场、行动、叙事及剧本启用的角色状态栏；WorldUpdater 生成的角色视角只作为 Narrator 输入。房主可从管理面板或“我的存档”下载已完成回合的历史 ZIP，查看世界状态与角色信息；处理中需等待本轮完成。
+## Template System
 
-## 仓库结构
+`templates/default/` is the scaffold for new scripts. A Template has `metadata.json` (`count`, `names`, `title`, `introduction`, `tags`), world text and state examples, numbered `characters/1..N/` directories, and AI prompts. Character status is optional. The `*_schema.json` files are field examples for the LLM, not standard JSON Schema.
 
-| 路径 | 用途 |
+The basic Web editor changes the title, introduction, tags, world text, character sheets, openings, and AI writing guidelines. It preserves advanced schemas and prompts. Download a Template ZIP to edit those files locally, then import the validated ZIP to create or replace your own Template. Older `players/` or `statusbar/` layouts are not automatically converted; see the [Platform guide](server/platform/README.md).
+
+## Project Structure
+
+| Path | Purpose |
 | --- | --- |
-| `server/platform/` | 账号、剧本与存档目录、房间路由、Admin 和 Web API |
-| `server/gameserver/` | 单个存档的状态、角色、回合、协议与 AI pipeline |
-| `web/` | React + TypeScript 用户客户端；`dist/` 为提交的生产构建 |
-| `client/admin.py` | 本机 Platform Admin Console |
-| `templates/default/` | 唯一提交的剧本 scaffold |
-| `tests/` | Python 测试和合成 fixture |
+| `server/platform/` | Accounts, Template/Game catalog, Rooms, Admin, and Web API |
+| `server/gameserver/` | One game's rounds, state, protocol, persistence, and AI pipeline |
+| `web/` | React and TypeScript client; `dist/` is the committed production build |
+| `client/admin.py` | Loopback-only platform Admin console |
+| `templates/default/` | Committed Template scaffold |
+| `tests/` | Python tests and synthetic fixtures |
 
-`data/`、`games/` 与非默认 `templates/` 是本机运行数据，不提交到 Git。
+`data/`, `games/`, and non-default `templates/` contain local runtime or user data and are ignored by Git.
 
-## 开发与详细文档
+## Development
 
 ```bash
 python -m unittest discover
-cd web && npx vitest run && npx tsc -b && npm run build
+cd web
+npm ci
+npx vitest run
+npx tsc -b
+npm run build
 ```
 
-- [Platform Core](server/platform/README.md)：配置、认证、资源模型、Room 生命周期、API、Admin 与导入。
-- [GameServer Runtime](server/gameserver/README.md)：单局 payload、协议、回合、AI pipeline、恢复与兼容入口。
-- [AGENTS.md](AGENTS.md)：开发和协作约束。
-- [TODO.md](TODO.md)：未来计划与已完成事项。
+Rebuild and include `web/dist/` when changing Web source.
+
+## Documentation
+
+- [Platform guide](server/platform/README.md) — accounts, resources, Rooms, Web API, Admin, and imports.
+- [GameServer guide](server/gameserver/README.md) — payload format, protocol, rounds, AI pipeline, retry, and recovery.
+- [Developer and agent guide](AGENTS.md) — repository boundaries and editing rules.
+- [Roadmap and decisions](TODO.md) — deferred work and design decisions.
+- [简体中文 README](README.zh-CN.md).
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).
