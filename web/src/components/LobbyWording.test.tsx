@@ -40,7 +40,7 @@ const home = (
     onCopyTemplate={asyncNoop} onDeleteTemplate={asyncNoop} />,
 );
 
-/** User-facing Chinese must say 剧本, never 模板. */
+/** User-facing Chinese uses 剧本 for a user's work; 高级模板 names the sample scaffold. */
 function expectScriptWording(html: string, ...expected: string[]) {
   for (const label of expected) expect(html).toContain(label);
   expect(html).not.toContain("模板");
@@ -127,7 +127,8 @@ describe("user-facing Template wording", () => {
         onImportZip={noop} onExportZip={noop} onRename={noop} onCopy={noop}
         onDelete={noop} onCreate={noop} onToggleVisibility={noop} />,
     );
-    expectScriptWording(html, "新建", "下载高级剧本", "剧本角色数");
+    expect(html).toContain("下载高级模板");
+    expectScriptWording(html.replace("下载高级模板", ""), "新建", "剧本角色数");
   });
 
   it("uses 剧本 in the detail view", () => {

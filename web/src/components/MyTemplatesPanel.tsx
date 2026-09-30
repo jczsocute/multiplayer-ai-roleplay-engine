@@ -60,7 +60,7 @@ export function MyTemplatesPanel({
           void downloadAdvancedTemplateZip().then((failure) => {
             if (failure) setAdvancedError(failure);
           }).finally(() => setAdvancedBusy(false));
-        }}>下载高级剧本</button>
+        }}>下载高级模板</button>
       <input ref={uploadInput} type="file" accept=".zip,application/zip" hidden
         onChange={(event) => {
           const file = event.target.files?.[0];

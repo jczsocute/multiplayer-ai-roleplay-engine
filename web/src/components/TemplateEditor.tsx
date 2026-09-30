@@ -186,9 +186,9 @@ export function TemplateEditor({ templateId, roleCounts, onBack, onSaved }: Prop
           <li>如需编辑角色状态栏或更多 prompt，请下载 zip 项目，编辑完成后导入。</li>
         </ul>
         <div className="panel-actions advanced-template-download">
-          <span className="muted">您可以在这里下载高级剧本。</span>
+          <span className="muted">您可以在这里下载高级模板。</span>
           <button type="button" className="secondary compact-button"
-            onClick={() => void downloadAdvancedZip()}>下载高级剧本</button>
+            onClick={() => void downloadAdvancedZip()}>下载高级模板</button>
         </div>
         <div className="panel-actions">
           <button type="button" className="secondary compact-button" onClick={() => void downloadZip()}>导出zip</button>

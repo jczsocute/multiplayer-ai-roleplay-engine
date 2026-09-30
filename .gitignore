@@ -67,6 +67,7 @@ htmlcov/
 
 # Web development dependencies (the production build is committed).
 /web/node_modules/
+node_modules/
 /web/*.tsbuildinfo
 
 # Local credentials and private keys

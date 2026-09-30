@@ -66,7 +66,8 @@ Keep the relevant document in sync with behavior changes.
   it from the index if necessary.
 - Keep synthetic tests and fixtures in `tests/`. `web/dist/` is a tracked
   production build; rebuild it after Web changes.
-- User-facing Chinese calls a Template “剧本”. Keep internal identifiers
+- User-facing Chinese calls a user's Template “剧本”. “高级模板” specifically
+  names the downloadable example used as a scaffold. Keep internal identifiers
   (`Template`, `template_id`, `templates`, `/api/templates`) unchanged.
 - The Basic Web Editor owns only payload metadata, world text, character text,
   openings and AI guidelines. Preserve advanced schema and prompt files on save.
