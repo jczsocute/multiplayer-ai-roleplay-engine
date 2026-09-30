@@ -76,7 +76,7 @@ python client/admin.py
 
 ## Template System
 
-`templates/default/` is the scaffold for new scripts. It uses a playful rock, paper, scissors setting with simple world and character-view schemas; new scripts still derive their structure from this directory. `templates/example1/` contains a fuller Chinese version with match state and status bars, while `templates/example1_en/` is its English showcase translation. The two examples are not listed as playable Templates. A Template has `metadata.json` (`count`, `names`, `title`, `introduction`, `tags`), world text and state examples, numbered `characters/1..N/` directories, and AI prompts. Character status is optional. The `*_schema.json` files are field examples for the LLM, not standard JSON Schema.
+`templates/default/` is the blank scaffold used to create new scripts. Its editable story fields start empty; simple world and character-view schemas and general AI prompts provide the underlying structure. `templates/default_en/` is its English showcase translation. `templates/example1/` contains a complete Chinese rock, paper, scissors scenario with match state and status bars, while `templates/example1_en/` is its English translation. The three showcases are not listed as playable Templates. A Template has `metadata.json` (`count`, `names`, `title`, `introduction`, `tags`), world text and state examples, numbered `characters/1..N/` directories, and AI prompts. Character status is optional. The `*_schema.json` files are field examples for the LLM, not standard JSON Schema.
 
 The basic Web editor changes the title, introduction, tags, world text, character sheets, openings, and AI writing guidelines. It preserves advanced schemas and prompts. Download a Template ZIP to edit those files locally, then import the validated ZIP to create or replace your own Template. Older `players/` or `statusbar/` layouts are not automatically converted; see the [Platform guide](server/platform/README.md).
 
@@ -89,10 +89,10 @@ The basic Web editor changes the title, introduction, tags, world text, characte
 | `web/` | React and TypeScript client; `dist/` is the committed production build |
 | `client/admin.py` | Loopback-only platform Admin console |
 | `templates/default/` | Committed Template scaffold |
-| `templates/example1/`, `templates/example1_en/` | Chinese and English showcase payloads; not playable catalog entries |
+| `templates/default_en/`, `templates/example1/`, `templates/example1_en/` | English scaffold and Chinese/English scenario showcases; not playable catalog entries |
 | `tests/` | Python tests and synthetic fixtures |
 
-`data/`, `games/`, and Templates other than the three bundled directories contain local runtime or user data and are ignored by Git.
+`data/`, `games/`, and Templates other than the four bundled directories contain local runtime or user data and are ignored by Git.
 
 ## Development
 

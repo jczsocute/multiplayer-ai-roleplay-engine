@@ -91,11 +91,12 @@ class ScenarioRoleScaffoldTests(unittest.TestCase):
                 )
                 for index in range(1, count + 1):
                     path = scenario / "characters" / str(index) / "opening.md"
-                    self.assertIn(f"角色{index}", path.read_text(encoding="utf-8"))
+                    self.assertEqual(path.read_text(encoding="utf-8"), "")
                 initial = json.loads(
                     (scenario / "world/world_state_initial.json").read_text(encoding="utf-8")
                 )
                 self.assertEqual(set(initial), {"world_information"})
+                self.assertEqual(initial["world_information"], "")
                 self.assertFalse((scenario / "schemas").exists())
 
 

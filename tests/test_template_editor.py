@@ -41,6 +41,20 @@ class TemplateEditorTests(unittest.TestCase):
             self.database, self.templates, self.record.id, self.owner.id, body, 2, 4,
         )
 
+    def test_new_template_editor_starts_with_blank_story_fields(self) -> None:
+        data = self.editor()
+        self.assertEqual(data["title"], "剧本")
+        self.assertEqual(data["introduction"], "")
+        self.assertEqual(data["tags"], [])
+        self.assertEqual(data["world"], "")
+        self.assertEqual(data["ai_guidelines"], "")
+        self.assertEqual(len(data["characters"]), 2)
+        self.assertTrue(all(row["character"] == row["opening"] == ""
+                            for row in data["characters"]))
+        self.assertEqual(json.loads((self.payload / "world/world_state_initial.json").read_text()),
+                         {"world_information": ""})
+        self.assertFalse(any(self.payload.glob("characters/*/character_status_schema.json")))
+
     def test_text_save_preserves_advanced_files_and_updates_catalog(self) -> None:
         (self.payload / "characters/1/character_status_schema.json").write_text(
             '{"mood": "<current mood>"}', encoding="utf-8"

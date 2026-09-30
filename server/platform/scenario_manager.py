@@ -12,7 +12,7 @@ from server.gameserver.template import validate_template
 
 class ScenarioManager:
     BASE_TEMPLATE = "default"
-    RESERVED_TEMPLATES = frozenset({BASE_TEMPLATE, "example1", "example1_en"})
+    RESERVED_TEMPLATES = frozenset({BASE_TEMPLATE, "default_en", "example1", "example1_en"})
 
     def __init__(
         self,
@@ -104,7 +104,6 @@ class ScenarioManager:
         base = character_dir / "1"
         if not base.is_dir():
             raise ValueError("base template is missing generic role files")
-        character_text = (base / "character.md").read_text(encoding="utf-8")
         view_schema = (base / "character_view_schema.json").read_text(encoding="utf-8")
         status_schema = base / "character_status_schema.json"
         status_initial = base / "character_status_initial.json"
@@ -124,22 +123,14 @@ class ScenarioManager:
         for index in range(1, role_count + 1):
             directory = character_dir / str(index)
             directory.mkdir()
-            character = re.sub(r"(?m)^# .+$", f"# 角色 P{index}", character_text, count=1)
-            character = re.sub(
-                r"(?m)^姓名[：:].+$", f"姓名：{names[index - 1]}", character, count=1
-            )
-            (directory / "character.md").write_text(character, encoding="utf-8")
+            (directory / "character.md").write_text("", encoding="utf-8")
             (directory / "character_view_schema.json").write_text(view_schema, encoding="utf-8")
-            (directory / "opening.md").write_text(
-                f"这是角色{index}的开场白。请在这里描述角色当前看到、听到、知道的情况，"
-                "以及第一轮行动所需的必要背景。\n",
-                encoding="utf-8",
-            )
+            (directory / "opening.md").write_text("", encoding="utf-8")
             if status_schema_text is not None and status_initial_text is not None:
                 (directory / "character_status_schema.json").write_text(status_schema_text, encoding="utf-8")
                 (directory / "character_status_initial.json").write_text(status_initial_text, encoding="utf-8")
         (target / "world" / "world_state_initial.json").write_text(
-            json.dumps({"world_information": "请在此填写剧本初始世界事实。"}, ensure_ascii=False, indent=2) + "\n",
+            json.dumps({"world_information": ""}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         validate_template(target)

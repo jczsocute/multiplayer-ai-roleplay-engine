@@ -217,13 +217,13 @@ class CatalogMigrationTests(unittest.TestCase):
             self.alice.id, "基础", is_public=True,
         )
         listed = describe_template(self.templates_dir, template, "Alice")
-        self.assertIn("石头剪刀布", listed["tags"])
-        self.assertEqual(listed["role_names"], ["路人甲", "路人乙"])
+        self.assertEqual(listed["tags"], [])
+        self.assertEqual(listed["role_names"], ["角色1", "角色2"])
         self.assertNotIn("introduction", listed)
         detailed = describe_template(
             self.templates_dir, template, "Alice", include_introduction=True
         )
-        self.assertIn("石头剪刀布", detailed["introduction"])
+        self.assertEqual(detailed["introduction"], "")
 
     def test_payload_metadata_helper_returns_none_for_a_broken_payload(self) -> None:
         self.templates_dir.mkdir(parents=True, exist_ok=True)
@@ -268,7 +268,7 @@ class SnapshotInvariantTests(unittest.TestCase):
             json.loads(snapshot.read_text(encoding="utf-8")), before
         )
         self.assertEqual(load_template_metadata(self.games_dir / game.id).names,
-                         ("路人甲", "路人乙"))
+                         ("角色1", "角色2"))
 
 
 class MigratedGameRuntimeTests(unittest.IsolatedAsyncioTestCase):

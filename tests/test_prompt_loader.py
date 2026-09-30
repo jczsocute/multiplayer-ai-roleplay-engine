@@ -30,19 +30,19 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.loader = PromptLoader()
 
     def test_scenario_files_load(self) -> None:
-        self.assertIn("世界管理 AI", self.loader.text("prompts/world_update.md"))
-        self.assertIn("叙事 AI", self.loader.text("prompts/narration.md"))
-        self.assertIn("AI 创作规范", self.loader.text("prompts/ai_guidelines.md"))
-        self.assertIn("世界设定", self.loader.text("world/world.md"))
-        self.assertIn("路人甲", self.loader.character("P1"))
-        self.assertEqual(self.loader.character_name("P1"), "路人甲")
-        self.assertEqual(self.loader.character_name("P2"), "路人乙")
-        self.assertIn("石头", self.loader.opening("P1"))
-        self.assertIn("剪刀", self.loader.opening("P2"))
+        self.assertIn("世界更新", self.loader.text("prompts/world_update.md"))
+        self.assertIn("角色叙事", self.loader.text("prompts/narration.md"))
+        self.assertEqual(self.loader.text("prompts/ai_guidelines.md"), "")
+        self.assertEqual(self.loader.text("world/world.md"), "")
+        self.assertEqual(self.loader.character("P1"), "")
+        self.assertEqual(self.loader.character_name("P1"), "角色1")
+        self.assertEqual(self.loader.character_name("P2"), "角色2")
+        self.assertEqual(self.loader.opening("P1"), "")
+        self.assertEqual(self.loader.opening("P2"), "")
         payload = self.loader.json("metadata.json")
         self.assertEqual(payload["count"], 2)
         self.assertEqual(len(payload["names"]), payload["count"])
-        self.assertTrue(payload["introduction"])
+        self.assertEqual(payload["introduction"], "")
         self.assertIsNone(self.loader.character_status_schema("P1"))
         self.assertIsNone(self.loader.character_status_schema("P2"))
         with self.assertRaisesRegex(ValueError, "unknown role"):
@@ -66,7 +66,7 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
     def test_initial_state_contains_complete_character_state(self) -> None:
         state = self.loader.json("world/world_state_initial.json")
         self.assertEqual(set(state), {"world_information"})
-        self.assertIn("石头剪刀布", state["world_information"])
+        self.assertEqual(state["world_information"], "")
         for role in self.loader.role_ids:
             self.assertIsNone(self.loader.character_status_initial(role))
 
@@ -83,6 +83,20 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
                     set(loader.character_status_initial(role)),
                     set(loader.character_status_schema(role)),
                 )
+
+    def test_english_scaffold_has_only_generic_content(self) -> None:
+        root = Path("templates/default_en")
+        roles = validate_template(root, min_count=2, max_count=4)
+        loader = PromptLoader(root, roles)
+        self.assertEqual(tuple(roles.names.values()), ("Character 1", "Character 2"))
+        self.assertEqual(loader.text("world/world.md"), "")
+        self.assertEqual(loader.text("prompts/ai_guidelines.md"), "")
+        self.assertEqual(loader.json("world/world_state_initial.json"), {"world_information": ""})
+        self.assertIn("World update", loader.text("prompts/world_update.md"))
+        for role in roles.role_ids:
+            self.assertEqual(loader.character(role), "")
+            self.assertEqual(loader.opening(role), "")
+            self.assertIsNone(loader.character_status_schema(role))
 
     def test_narration_prompt_requests_plain_text_not_json(self) -> None:
         prompt = self.loader.text("prompts/narration.md")

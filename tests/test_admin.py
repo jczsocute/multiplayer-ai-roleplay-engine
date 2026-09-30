@@ -272,9 +272,9 @@ class AdminTemplateCommandTests(AdminFixture):
             self.assertEqual(detail["type"], "ok")
             # The Admin view shows the payload title, like the Web does.
             self.assertEqual(detail["data"]["name"], "Described")
-            self.assertTrue(detail["data"]["introduction"])
-            self.assertEqual(detail["data"]["tags"], ["双人", "石头剪刀布", "搞笑", "轻量"])
-            self.assertEqual(detail["data"]["roles"], ["路人甲", "路人乙"])
+            self.assertEqual(detail["data"]["introduction"], "")
+            self.assertEqual(detail["data"]["tags"], [])
+            self.assertEqual(detail["data"]["roles"], ["角色1", "角色2"])
 
     def test_import_and_delete_keeps_games(self) -> None:
         shutil.copytree(Path("templates/default"), self.templates_dir / "lighthouse")
@@ -371,6 +371,12 @@ class BootstrapTests(AdminFixture):
         legacy = self.games_dir / "three_player_test"
         shutil.copytree(Path("templates/default"), legacy)
         (legacy / "game.db").write_bytes(b"runtime state")
+        for path in (self.templates_dir / "love_story", legacy):
+            metadata_path = path / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["introduction"] = "Synthetic bundled description"
+            metadata["tags"] = ["fixture"]
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
 
     def test_bootstrap_is_idempotent_and_public(self) -> None:
         self._bundled_payloads()

@@ -24,8 +24,9 @@ class TemplateFormatTests(unittest.TestCase):
         loader = PromptLoader(str(self.root), roles)
         self.assertEqual(roles.role_ids, ("P1", "P2", "P3", "P4"))
         for index, role in enumerate(roles.role_ids, 1):
-            self.assertIn(f"角色 P{index}", loader.character(role))
-            self.assertIn(f"角色{index}", loader.opening(role))
+            self.assertEqual(loader.character_name(role), f"角色{index}")
+            self.assertEqual(loader.character(role), "")
+            self.assertEqual(loader.opening(role), "")
 
     def test_rejects_missing_role_and_legacy_layout(self) -> None:
         shutil.rmtree(self.root / "characters/2")

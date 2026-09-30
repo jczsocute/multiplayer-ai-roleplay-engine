@@ -168,11 +168,13 @@ GET    /api/rooms/<code>/history.zip 房主下载当前 Room 存档历史 ZIP
 - `GET /api/templates/<id>` 返回详情：`id/name/owner_username/is_public/role_count/
   role_names/introduction/tags/updated_at`；私有 Template 仅 owner 可读（其他用户 403），
   公开 Template 任何已登录用户可读。列表接口只附带便宜的 `tags`，不含 `introduction`。
-- Template 新建使用 `ScenarioManager.scaffold_roles`（石头剪刀布示例文字和通用 schema + N 个角色）；
-  新副本一律 `is_public = false`，作者可在编辑器中改写内容。
-- `templates/default/` 是新建剧本的唯一基础目录，保留通用的世界和角色视角 schema，
-  示例文字使用石头剪刀布；默认不启用状态栏。`templates/example1/` 与
-  `templates/example1_en/` 是中英文完整展示案例，不进入场景列表，也不能直接实例为 Game。
+- Template 新建使用 `ScenarioManager.scaffold_roles`（空白可编辑内容、通用 schema 和 N 个角色）；
+  新副本一律 `is_public = false`，作者在编辑器中填写故事内容。
+- `templates/default/` 是新建剧本的唯一基础目录，保留通用的世界和角色视角 schema、
+  世界更新与叙事 Prompt；故事文字和创作要求为空，默认不启用状态栏。
+  `templates/default_en/` 是英文基础模板展示；`templates/example1/` 与
+  `templates/example1_en/` 是中英文完整剧本案例。这三个展示目录不进入场景列表，
+  也不能直接实例为 Game。
 - 基础编辑器只写 `metadata.json` 的 title/introduction/tags、`world/world.md`、
   `characters/N/character.md` / `opening.md` 与 `prompts/ai_guidelines.md`。
   新增末尾角色时创建最小 view schema，不启用 status；减少角色时删除末尾目录。

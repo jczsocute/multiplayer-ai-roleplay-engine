@@ -58,6 +58,15 @@ class ScenarioManagerTests(unittest.TestCase):
             manager.delete_game("test_game")
             self.assertEqual(manager.list_games(), [])
 
+            four_roles = manager.create_scenario("blank_four", 4)
+            self.assertEqual(
+                json.loads((four_roles / "world/world_state_initial.json").read_text()),
+                {"world_information": ""},
+            )
+            for index in range(1, 5):
+                self.assertEqual((four_roles / f"characters/{index}/character.md").read_text(), "")
+                self.assertEqual((four_roles / f"characters/{index}/opening.md").read_text(), "")
+
     def test_default_is_hidden_and_scenario_copy_can_be_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -83,11 +92,11 @@ class ScenarioManagerTests(unittest.TestCase):
     def test_showcase_examples_are_hidden_and_not_playable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("default", "example1", "example1_en"):
+            for name in ("default", "default_en", "example1", "example1_en"):
                 shutil.copytree(Path("templates") / name, root / "templates" / name)
             manager = ScenarioManager(root / "templates", root / "games")
             self.assertEqual(manager.list_scenarios(), [])
-            for name in ("example1", "example1_en"):
+            for name in ("default_en", "example1", "example1_en"):
                 with self.assertRaisesRegex(ValueError, "not a playable"):
                     manager.create_game(name, "game")
                 with self.assertRaisesRegex(ValueError, "protected"):

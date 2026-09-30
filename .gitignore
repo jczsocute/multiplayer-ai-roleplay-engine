@@ -30,6 +30,8 @@ database/*.db
 /templates/*
 !/templates/default/
 !/templates/default/**
+!/templates/default_en/
+!/templates/default_en/**
 !/templates/example1/
 !/templates/example1/**
 !/templates/example1_en/

@@ -255,10 +255,10 @@ class BundledPayloadTests(unittest.TestCase):
         self.assertFalse((root / LEGACY_ROLES_FILENAME).exists())
         metadata = load_template_metadata(root)
         self.assertEqual(metadata.count, 2)
-        self.assertEqual(metadata.names, ("路人甲", "路人乙"))
-        self.assertTrue(metadata.introduction)
-        self.assertIn("石头剪刀布", metadata.tags)
-        self.assertTrue(metadata.title)
+        self.assertEqual(metadata.names, ("角色1", "角色2"))
+        self.assertEqual(metadata.introduction, "")
+        self.assertEqual(metadata.tags, ())
+        self.assertEqual(metadata.title, "")
 
     def test_bundled_legacy_names_have_real_descriptions(self) -> None:
         from server.platform.bootstrap import BUNDLED_SCRIPTS, BUNDLED_TEMPLATES
