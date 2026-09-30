@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 export const MAX_USERNAME_LENGTH = 32;
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_ROOM_CHAT_LENGTH = 4000;
@@ -38,6 +38,7 @@ export type JoinedMessage = {
   protocol_version: number;
   user: AuthUser;
   role: Role | null;
+  assigned_roles: Role[];
   view_role: Role | null;
   is_host: boolean;
   reclaimed?: boolean;
@@ -50,14 +51,15 @@ export type ResumedMessage = {
   protocol_version: number;
   user: AuthUser;
   role: Role | null;
+  assigned_roles: Role[];
   view_role: Role | null;
   is_host: boolean;
   scenario: string;
   resume_token: string;
   roles: RoleDefinition[];
 };
-export type PresenceMessage = { type: "presence"; users: Array<{ user_id?: number; name: string; role: Role | null; connected?: boolean }> };
-export type IdentityChangedMessage = { type: "identity_changed"; role: Role | null; view_role: Role | null; reset: boolean };
+export type PresenceMessage = { type: "presence"; users: Array<{ user_id?: number; name: string; role: Role | null; assigned_roles: Role[]; connected?: boolean }> };
+export type IdentityChangedMessage = { type: "identity_changed"; role: Role | null; assigned_roles: Role[]; view_role: Role | null; reset: boolean };
 export type RoleAssignedMessage = { type: "role_assigned"; assignments: Record<string, Role | null>; changed_users: string[] };
 export type RoleViewMessage = {
   type: "role_view";

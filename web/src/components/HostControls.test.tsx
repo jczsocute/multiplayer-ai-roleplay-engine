@@ -33,3 +33,15 @@ describe("close room control", () => {
       .not.toMatch(/disabled=""[^>]*>关闭房间/);
   });
 });
+
+describe("multi-role member list", () => {
+  it("shows every assigned character name", () => {
+    const html = renderToStaticMarkup(<HostControlsDialog connection="CONNECTED"
+      processingStage={null} round={1} ownerUserId={2} onClose={() => undefined}
+      roles={[{ id: "P1", name: "路人甲" }, { id: "P2", name: "路人乙" }]}
+      users={[{ user_id: 1, name: "Alice", assigned_roles: ["P1", "P2"] }]}
+      send={() => undefined} />);
+    expect(html).toContain("Alice");
+    expect(html).toContain("路人甲、路人乙");
+  });
+});

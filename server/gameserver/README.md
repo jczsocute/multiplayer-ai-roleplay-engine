@@ -78,8 +78,11 @@ Game payload 是 Template 的完整文件快照，保存在 `games/game_*/`。�
 
 ## 回合与 AI pipeline
 
-当前单局协议版本为 `7`。Platform 层只消费首个消息中的 Room Password 并选择
+当前单局协议版本为 `8`。Platform 层只消费首个消息中的 Room Password 并选择
 Runtime，之后继续使用同一套 GameServer 消息；平台资源 API 不进入游戏协议。
+角色分配仍为 `role → user_id`，允许同一用户扮演多个角色；每个角色只属于一名用户。
+身份消息与 presence 通过 `assigned_roles` 列出该用户的全部角色，`view_role` 是当前查看及操作的角色。
+观众可以查看任意角色；玩家只能在自己的角色间切换。行动、提交、撤销、暂停、恢复和状态查询均作用于当前 `view_role`。
 
 所有角色 READY 后进入 PROCESSING：
 

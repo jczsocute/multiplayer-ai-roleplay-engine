@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { initialState, reducer } from "./state";
 
 describe("protocol reducer", () => {
+  it("keeps drafts separate while switching assigned roles", () => {
+    const base = { ...initialState, assignedRoles: ["P1", "P2"], viewRole: "P1" };
+    const first = reducer(base, { type: "action_draft", text: "打开门" });
+    const secondView = reducer(first, { type: "server", message: {
+      type: "role_view", role: "P2", character_name: "路人乙", opening: "", history: [],
+      character_status: null, reset: true, draft: "守门",
+    } });
+    const second = reducer(secondView, { type: "action_draft", text: "守住门口" });
+    const firstAgain = reducer(second, { type: "server", message: {
+      type: "role_view", role: "P1", character_name: "路人甲", opening: "", history: [],
+      character_status: null, reset: true, draft: "打开门",
+    } });
+    expect(firstAgain.actionDrafts).toEqual({ P1: "打开门", P2: "守住门口" });
+    expect(firstAgain.viewRole).toBe("P1");
+  });
   it("replaces story history without touching room chat", () => {
     const withChat = reducer(initialState, { type: "server", message: {
       type: "room_message", kind: "spectator", sender: "Tom", role: null,
@@ -30,23 +45,23 @@ describe("protocol reducer", () => {
       type: "role_view", role: "P1", character_name: "林岚", reset: true,
       opening: "opening", history: [], character_status: null, draft: "should be ignored",
     }});
-    expect(spectator.actionDraft).toBe("");
+    expect(spectator.actionDrafts).toEqual({});
   });
 
   it("clears player-only state when reassigned to spectator", () => {
-    const player = { ...initialState, role: "P1", viewRole: "P1", actionDraft: "secret",
+    const player = { ...initialState, role: "P1", assignedRoles: ["P1"], viewRole: "P1", actionDrafts: { P1: "secret" },
       storyEntries: [{ kind: "action" as const, content: "old" }] };
     const spectator = reducer(player, { type: "server", message: {
-      type: "identity_changed", role: null, view_role: "P1", reset: true,
+      type: "identity_changed", role: null, assigned_roles: [], view_role: "P1", reset: true,
     }});
-    expect(spectator.actionDraft).toBe("");
+    expect(spectator.actionDrafts).toEqual({});
     expect(spectator.storyEntries).toEqual([]);
   });
 
   it("joined stores the authenticated user and host capability", () => {
     const joined = reducer(initialState, { type: "server", message: {
       type: "joined", protocol_version: 4, user: { id: 17, username: "Alice" },
-      role: "P1", view_role: "P1", is_host: true, scenario: "lighthouse",
+      role: "P1", assigned_roles: ["P1"], view_role: "P1", is_host: true, scenario: "lighthouse",
       resume_token: "token-1",
       roles: [{ id: "P1", name: "林岚" }, { id: "P2", name: "周砚" }],
     }});
@@ -59,7 +74,7 @@ describe("protocol reducer", () => {
   it("resumed restores connection and identity", () => {
     const resumed = reducer({ ...initialState, connection: "RECONNECTING" }, { type: "server", message: {
       type: "resumed", protocol_version: 4, user: { id: 17, username: "Alice" },
-      role: "P1", view_role: "P1", is_host: false,
+      role: "P1", assigned_roles: ["P1"], view_role: "P1", is_host: false,
       scenario: "lighthouse", resume_token: "token-2",
       roles: [{ id: "P1", name: "林岚" }, { id: "P2", name: "周砚" }, { id: "P3", name: "苏禾" }],
     }});
@@ -82,7 +97,7 @@ describe("protocol reducer", () => {
   it("session_replaced drops back to the join screen", () => {
     const active = reducer(initialState, { type: "server", message: {
       type: "joined", protocol_version: 4, user: { id: 17, username: "Alice" },
-      role: null, view_role: null, is_host: false, scenario: "test",
+      role: null, assigned_roles: [], view_role: null, is_host: false, scenario: "test",
       resume_token: "t", roles: [{ id: "P1", name: "A" }],
     }});
     const replaced = reducer(active, { type: "server", message: {

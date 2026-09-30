@@ -24,17 +24,18 @@ export type ClientState = {
   resumeToken: string;
   roles: RoleDefinition[];
   role: Role | null;
+  assignedRoles: Role[];
   viewRole: Role | null;
   characterName: string;
   scenario: string;
-  presence: Array<{ user_id?: number; name: string; role: Role | null; connected?: boolean }>;
+  presence: Array<{ user_id?: number; name: string; role: Role | null; assigned_roles: Role[]; connected?: boolean }>;
   players: Partial<Record<Role, PlayerState>>;
   round: number | null;
   processingStage: string | null;
   opening: string;
   storyEntries: StoryEntry[];
   characterStatus: unknown | null;
-  actionDraft: string;
+  actionDrafts: Record<Role, string>;
   chatDraft: string;
   roomMessages: RoomMessage[];
   mobileTab: MobileTab;
@@ -47,10 +48,10 @@ export const initialState: ClientState = {
   authChecked: false, authUser: null, isHost: false,
   connection: "DISCONNECTED", roomKey: "", roomKeyRequired: true, allowRegistration: true,
   roomDisconnectTimeoutSeconds: 60,
-  resumeToken: "", roles: [], role: null, viewRole: null, characterName: "", scenario: "",
+  resumeToken: "", roles: [], role: null, assignedRoles: [], viewRole: null, characterName: "", scenario: "",
   presence: [], players: {}, round: null, processingStage: null, opening: "",
   storyEntries: [], characterStatus: null,
-  actionDraft: "", chatDraft: "", roomMessages: [], mobileTab: "story",
+  actionDrafts: {}, chatDraft: "", roomMessages: [], mobileTab: "story",
   chatUnread: 0, errors: [], notices: [],
 };
 
@@ -96,7 +97,12 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
       roomDisconnectTimeoutSeconds: action.roomDisconnectTimeoutSeconds ?? state.roomDisconnectTimeoutSeconds,
     };
   }
-  if (action.type === "action_draft") return { ...state, actionDraft: action.text };
+  if (action.type === "action_draft") {
+    const role = state.viewRole;
+    return role && state.assignedRoles.includes(role)
+      ? { ...state, actionDrafts: { ...state.actionDrafts, [role]: action.text } }
+      : state;
+  }
   if (action.type === "chat_draft") return { ...state, chatDraft: action.text };
   if (action.type === "mobile_tab") {
     return { ...state, mobileTab: action.tab, chatUnread: action.tab === "chat" ? 0 : state.chatUnread };
@@ -113,11 +119,13 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
   switch (message.type) {
     case "joined":
       return { ...state, connection: "CONNECTED", authUser: message.user, isHost: message.is_host,
-        role: message.role, viewRole: message.view_role, scenario: message.scenario,
+        role: message.role, assignedRoles: message.assigned_roles,
+        viewRole: message.view_role, scenario: message.scenario,
         resumeToken: message.resume_token, roles: message.roles };
     case "resumed":
       return { ...state, connection: "CONNECTED", authUser: message.user, isHost: message.is_host,
-        role: message.role, viewRole: message.view_role, scenario: message.scenario,
+        role: message.role, assignedRoles: message.assigned_roles,
+        viewRole: message.view_role, scenario: message.scenario,
         resumeToken: message.resume_token, roles: message.roles };
     case "session_replaced":
       return { ...state, connection: "DISCONNECTED", notices: [...state.notices, message.detail] };
@@ -126,17 +134,19 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
     case "presence":
       return { ...state, presence: message.users };
     case "identity_changed":
-      return { ...state, role: message.role, viewRole: message.view_role,
+      return { ...state, role: message.role, assignedRoles: message.assigned_roles,
+        viewRole: message.view_role,
         opening: message.reset ? "" : state.opening,
         storyEntries: message.reset ? [] : state.storyEntries,
         characterStatus: message.reset ? null : state.characterStatus,
-        actionDraft: message.role ? state.actionDraft : "" };
+        actionDrafts: Object.fromEntries(Object.entries(state.actionDrafts)
+          .filter(([role]) => message.assigned_roles.includes(role))) };
     case "role_view":
       return { ...state, viewRole: message.role, characterName: message.character_name,
         opening: message.opening, storyEntries: message.history,
         characterStatus: message.character_status,
-        actionDraft: state.role === message.role && message.draft !== undefined
-          ? message.draft : state.actionDraft };
+        actionDrafts: state.assignedRoles.includes(message.role) && message.draft !== undefined
+          ? { ...state.actionDrafts, [message.role]: message.draft } : state.actionDrafts };
     case "role_round":
       if (message.role !== state.viewRole) return state;
       return { ...state, storyEntries: [...state.storyEntries, ...message.entries],
@@ -147,13 +157,15 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
     case "state":
       return { ...state, round: message.round, players: message.players,
         processingStage: isVisibleStage(message.stage) ? message.stage : null,
-        actionDraft: state.role && message.players[state.role]?.status === "EDITING"
-          && !message.players[state.role]?.has_action ? "" : state.actionDraft };
+        actionDrafts: Object.fromEntries(Object.entries(state.actionDrafts).map(([role, draft]) =>
+          [role, state.assignedRoles.includes(role) && message.players[role]?.status === "EDITING"
+            && !message.players[role]?.has_action ? "" : draft])) };
     case "processing_stage":
       return { ...state, processingStage: isVisibleStage(message.stage) ? message.stage : null };
     case "status":
       return { ...state, round: message.round, players: message.players,
-        actionDraft: message.draft };
+        actionDrafts: state.assignedRoles.includes(message.role)
+          ? { ...state.actionDrafts, [message.role]: message.draft } : state.actionDrafts };
     case "round_complete":
       return { ...state, processingStage: null };
     case "error":
@@ -167,7 +179,9 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
       return {
         ...state,
         role: null,
+        assignedRoles: [],
         viewRole: null,
+        actionDrafts: {},
         isHost: false,
         connection: "DISCONNECTED",
         errors: [...state.errors, message.reason || "你已被房主移出房间"],

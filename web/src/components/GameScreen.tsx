@@ -30,9 +30,14 @@ const connectionLabel: Record<string, string> = {
 };
 
 export function GameScreen({ state, send, setAction, setChat, sendChat, leave, closeRoom, exportHistory, setTab }: Props) {
-  const ownStatus = state.role ? state.players[state.role]?.status : undefined;
+  const activeRole = state.viewRole && state.assignedRoles.includes(state.viewRole)
+    ? state.viewRole : null;
+  const ownStatus = activeRole ? state.players[activeRole]?.status : undefined;
   const disconnected = state.connection !== "CONNECTED";
-  const ownCharacter = state.role ? state.players[state.role]?.character_name : null;
+  const ownCharacter = activeRole ? state.players[activeRole]?.character_name : null;
+  const draft = activeRole ? state.actionDrafts[activeRole] ?? "" : "";
+  const viewRoles = state.assignedRoles.length
+    ? state.roles.filter((role) => state.assignedRoles.includes(role.id)) : state.roles;
   const host = shouldShowHostControls(state.isHost);
   // A host leaves by closing the Room, so 离开房间 is only offered when there is
   // no close-room capability (e.g. a legacy single-game instance).
@@ -45,7 +50,7 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
           <span>
             {state.authUser?.username ?? "未知账号"}
             {state.isHost && <span className="host-badge">房主</span>}
-            {" · "}{state.role ? (ownCharacter ?? `玩家 ${state.role}`) : "观众"}
+            {" · "}{activeRole ? (ownCharacter ?? `玩家 ${activeRole}`) : "观众"}
           </span>
           <span className={`conn-dot conn-${state.connection.toLowerCase()}`}>{connectionLabel[state.connection] ?? state.connection}</span>
           <span className="muted">{state.presence.length} 人在线</span>
@@ -87,12 +92,12 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
       <section className="panel story-panel">
         <StoryView entries={state.storyEntries} viewRole={state.viewRole} characterName={state.characterName}
           opening={state.opening}
-          spectator={!state.role} roles={state.roles} viewDisabled={disconnected}
+          spectator={state.assignedRoles.length === 0} roles={state.roles} viewRoles={viewRoles} viewDisabled={disconnected}
           onView={(role) => send({ type: "view", role })} />
-        {state.role && <Composer draft={state.actionDraft} status={ownStatus} disabled={disconnected}
-          onDraft={setAction} onSubmit={() => { send({ type: "action", text: state.actionDraft }); send({ type: "submit" }); }}
+        {activeRole && <Composer draft={draft} status={ownStatus} disabled={disconnected}
+          onDraft={setAction} onSubmit={() => { send({ type: "action", text: draft }); send({ type: "submit" }); }}
           onCancel={() => send({ type: "cancel_submit" })}
-          onPause={() => { send({ type: "action", text: state.actionDraft }); send({ type: "pause" }); }}
+          onPause={() => { send({ type: "action", text: draft }); send({ type: "pause" }); }}
           onResume={() => send({ type: "resume" })} />}
       </section>
       <section className="panel chat-panel">

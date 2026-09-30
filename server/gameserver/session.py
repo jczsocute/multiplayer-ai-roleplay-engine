@@ -22,7 +22,7 @@ class User:
     ``connected`` means the participant currently has a live websocket.  After an
     unexpected disconnect the participant stays in :class:`Sessions` for the grace
     period with ``websocket=None`` and ``connected=False`` so the same account can
-    reclaim its username, role, view and draft.
+    reclaim its username, assigned roles, view and draft.
 
     ``user_id`` is the identity; ``username`` is display/login only.
     """
@@ -30,11 +30,18 @@ class User:
     user_id: int
     username: str
     websocket: Connection | None = None
-    role: str | None = None
+    assigned_roles: set[str] = field(default_factory=set)
     view_role: str | None = None
     resume_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     connected: bool = True
     disconnect_task: asyncio.Task | None = None
+
+    @property
+    def role(self) -> str | None:
+        """Legacy identity field: the currently selected assigned role."""
+        if self.view_role in self.assigned_roles:
+            return self.view_role
+        return min(self.assigned_roles, default=None)
 
 
 @dataclass(frozen=True)
@@ -166,34 +173,31 @@ class Sessions:
             if set(assignments) != self._role_set:
                 raise ValueError("每个角色都必须分配且只能分配一个成员")
             user_ids = list(assignments.values())
-            if len(set(user_ids)) != len(user_ids):
-                raise ValueError("每个角色必须分配给不同的成员")
             if any(
                 user_id not in self.users or not self.users[user_id].connected
                 for user_id in user_ids
             ):
                 raise ValueError("只能把角色分配给当前在线的成员")
 
-            requested = {user_id: role for role, user_id in assignments.items()}
+            requested: dict[int, set[str]] = {}
+            for role, user_id in assignments.items():
+                requested.setdefault(user_id, set()).add(role)
             for user in self.users.values():
-                old_role = user.role
-                new_role = requested.get(user.user_id)
-                if old_role == new_role:
-                    continue
-                user.role = new_role
-                if new_role is not None:
-                    user.view_role = new_role
-                elif old_role is not None:
-                    user.view_role = old_role
+                old_roles = user.assigned_roles
+                user.assigned_roles = requested.get(user.user_id, set())
+                if user.assigned_roles and user.view_role not in user.assigned_roles:
+                    user.view_role = next(role for role in self.role_ids if role in user.assigned_roles)
+                elif not user.assigned_roles and user.view_role is None and old_roles:
+                    user.view_role = next(role for role in self.role_ids if role in old_roles)
 
     @property
     def roles_assigned(self) -> bool:
-        return {user.role for user in self.users.values() if user.role} == self._role_set
+        return set().union(*(user.assigned_roles for user in self.users.values())) == self._role_set
 
     async def role_for(self, user_id: int) -> str | None:
         async with self._lock:
             user = self.users.get(user_id)
-            return user.role if user else None
+            return user.view_role if user and user.view_role in user.assigned_roles else None
 
     async def username(self, user_id: int) -> str | None:
         async with self._lock:
@@ -203,32 +207,32 @@ class Sessions:
     async def user_for_role(self, role: str) -> User | None:
         self._validate_role(role)
         async with self._lock:
-            return next((user for user in self.users.values() if user.role == role), None)
+            return next((user for user in self.users.values() if role in user.assigned_roles), None)
 
     async def role_assignments(self) -> dict[str, int]:
         """Role id -> account id for every currently occupied role."""
         async with self._lock:
             return {
-                user.role: user.user_id
+                role: user.user_id
                 for user in self.users.values()
-                if user.role is not None
+                for role in user.assigned_roles
             }
 
     async def role_usernames(self) -> dict[str, str]:
         """Role id -> display username for every currently occupied role."""
         async with self._lock:
             return {
-                user.role: user.username
+                role: user.username
                 for user in self.users.values()
-                if user.role is not None
+                for role in user.assigned_roles
             }
 
     async def role_connections(self) -> dict[str, bool]:
         async with self._lock:
             return {
-                user.role: user.connected
+                role: user.connected
                 for user in self.users.values()
-                if user.role is not None
+                for role in user.assigned_roles
             }
 
     async def set_view(self, user_id: int, role: str) -> None:
@@ -237,8 +241,8 @@ class Sessions:
             user = self.users.get(user_id)
             if user is None:
                 raise ValueError("该成员当前不在线")
-            if user.role is not None:
-                raise ValueError("玩家不能切换查看视角")
+            if user.assigned_roles and role not in user.assigned_roles:
+                raise ValueError("玩家不能查看未分配给自己的角色")
             user.view_role = role
 
     def _validate_role(self, role: str) -> None:
@@ -252,6 +256,7 @@ class Sessions:
                     "user_id": user.user_id,
                     "name": user.username,
                     "role": user.role,
+                    "assigned_roles": [role for role in self.role_ids if role in user.assigned_roles],
                     "connected": user.connected,
                 }
                 for user in self.users.values()

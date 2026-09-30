@@ -18,6 +18,7 @@ export type RoomMember = {
   user_id?: number;
   name: string;
   role?: string | null;
+  assigned_roles?: string[];
   connected?: boolean;
 };
 
@@ -111,7 +112,10 @@ export function HostControlsDialog({
                 {member.name}
                 {member.user_id === ownerUserId && <span className="host-badge">房主</span>}
                 {member.connected === false && <span className="muted"> · 离线中</span>}
-                {member.role && <span className="muted"> · {member.role}</span>}
+                {(member.assigned_roles?.length || member.role) && <span className="muted"> · {
+                  (member.assigned_roles?.length ? member.assigned_roles : [member.role])
+                    .map((role) => roles.find((item) => item.id === role)?.name ?? role).join("、")
+                }</span>}
               </span>
               {member.user_id !== ownerUserId && canKick && <button className="secondary member-kick"
                 onClick={() => send({ type: "kick_user", user_id: Number(member.user_id) })}>

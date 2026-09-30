@@ -220,6 +220,7 @@ ROOM_DISCONNECT_TIMEOUT_SECONDS=300
 只在首个 `join`/`resume` 消息中传输；服务端保存 scrypt hash/salt，不保存明文。
 一个已连接账号最多进入一个 Room，同 Room reconnect/newest-wins 仍复用 GameServer
 Sessions 语义。
+同一账号可在一个 Room 内扮演多个角色；Web 在这些角色间切换时分别保留行动草稿。
 
 本机平台管理使用 loopback-only Admin endpoint：
 

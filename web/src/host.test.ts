@@ -82,6 +82,7 @@ describe("owner state", () => {
         protocol_version: 7,
         user: { id: 1, username: "Alice" },
         role: "P1",
+        assigned_roles: ["P1"],
         view_role: "P1",
         is_host: true,
         scenario: "test",

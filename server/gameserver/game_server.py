@@ -137,7 +137,7 @@ class GameServer:
                     await self._send_role_view(
                         websocket,
                         participant.view_role,
-                        include_draft=participant.role is not None,
+                        include_draft=participant.view_role in participant.assigned_roles,
                     )
                 await self._announce_join(result)
                 await self._send_identity_notice(participant, websocket)
@@ -194,6 +194,7 @@ class GameServer:
             "type": message_type,
             "user": {"id": user.user_id, "username": user.username},
             "role": user.role,
+            "assigned_roles": [role for role in self.role_ids if role in user.assigned_roles],
             "view_role": user.view_role,
             "is_host": self.is_host(user.user_id),
             "scenario": self.scenario_name,
@@ -218,9 +219,10 @@ class GameServer:
     async def _send_identity_notice(self, participant: User, websocket: Connection) -> None:
         if self.is_host(participant.user_id):
             text = "您目前身份为 <房主>。"
-        elif participant.role:
-            name = self.character_names[participant.role]
-            text = f"您目前扮演 <{name}>。请继续游戏。"
+        elif participant.assigned_roles:
+            names = "、".join(self.character_names[role] for role in self.role_ids
+                             if role in participant.assigned_roles)
+            text = f"您目前扮演 <{names}>。请继续游戏。"
         else:
             text = "您目前身份为 <观众>。请等待房主分配角色。"
         await websocket.send(json.dumps({
@@ -248,9 +250,9 @@ class GameServer:
         return normalize_room_key(str(provided or "")) == normalize_room_key(self.room_key)
 
     async def _send_resume_view(self, user, websocket: Connection) -> None:
-        if user.role:
+        if user.view_role in user.assigned_roles:
             await self._send_role_view(
-                websocket, user.role, include_draft=True
+                websocket, user.view_role, include_draft=True
             )
         elif user.view_role:
             await self._send_role_view(websocket, user.view_role)
@@ -258,7 +260,7 @@ class GameServer:
     async def _on_grace_expired(self, user) -> None:
         """Room disconnect timeout: the participant is already out of Sessions."""
         logger.info("User %s disconnect timeout expired", user.username)
-        await self._finish_member_exit(user.user_id, user.username, user.role)
+        await self._finish_member_exit(user.user_id, user.username, user.assigned_roles)
 
     async def evict_user(
         self, user_id: int, *, code: str | None = "kicked",
@@ -289,7 +291,7 @@ class GameServer:
                 await connection.close(code=1008 if code else 1000)
             except Exception:
                 logger.debug("Could not close the socket of %s", user.username)
-        await self._finish_member_exit(user_id, user.username, user.role, reason)
+        await self._finish_member_exit(user_id, user.username, user.assigned_roles, reason)
         return True
 
     async def leave_user(self, user_id: int) -> bool:
@@ -297,21 +299,23 @@ class GameServer:
         return await self.evict_user(user_id, code=None, reason="")
 
     async def _finish_member_exit(
-        self, user_id: int, username: str, role: str | None, reason: str = ""
+        self, user_id: int, username: str, roles: set[str], reason: str = ""
     ) -> None:
         """Release everything tied to a participant that definitively left."""
-        if role is not None and not self.rounds.is_processing():
-            player = self.rounds.players[role]
-            player.status = PlayerStatus.EDITING
-            player.action = ""
-            await self.database.save_player(role, player.status, player.action)
+        if not self.rounds.is_processing():
+            for role in roles:
+                player = self.rounds.players[role]
+                player.status = PlayerStatus.EDITING
+                player.action = ""
+                await self.database.save_player(role, player.status, player.action)
         await self._broadcast_presence()
         await self._broadcast_state()
         text = f"{username} 已离开房间。"
         if reason:
             text = f"{username} 已被移出房间。"
-        if role:
-            text += f" Player {role} 当前无人扮演。"
+        for role in self.role_ids:
+            if role in roles:
+                text += f" Player {role} 当前无人扮演。"
         await self._broadcast_room_message("system", text)
         await self._notify_member_left(user_id)
 
@@ -390,12 +394,14 @@ class GameServer:
                     await self._assign_role_ids(assignments)
                     return
                 if command == "view":
-                    if player_id is not None:
-                        raise RoundError("玩家不能切换查看视角")
                     role = str(message.get("role", "")).upper()
                     await self.sessions.set_view(user_id, role)
-                    await self._send_role_view(websocket, role)
+                    await self._send_role_view(
+                        websocket, role,
+                        include_draft=role in self.sessions.users[user_id].assigned_roles,
+                    )
                     return
+                player_id = await self.sessions.role_for(user_id)
                 if player_id is None:
                     raise RoundError("观众只能使用房间聊天、查看视角和退出")
                 if command == "status":
@@ -444,8 +450,6 @@ class GameServer:
             raise RoundError("AI 正在处理本回合，暂时不能重新分配角色")
         if set(resolved) != set(self.role_ids):
             raise RoundError("每个角色都必须分配且只能分配一个成员")
-        if len(set(resolved.values())) != len(resolved):
-            raise RoundError("每个角色必须分配给不同的成员")
         for user_id in resolved.values():
             participant = self.sessions.users.get(user_id)
             if participant is None or not participant.connected:
@@ -465,8 +469,12 @@ class GameServer:
             player.action = ""
             await self.database.save_player(role, player.status, player.action)
 
-        before_by_id = {user_id: role for role, user_id in before.items()}
-        after_by_id = {user_id: role for role, user_id in after.items()}
+        before_by_id: dict[int, set[str]] = {}
+        after_by_id: dict[int, set[str]] = {}
+        for role, user_id in before.items():
+            before_by_id.setdefault(user_id, set()).add(role)
+        for role, user_id in after.items():
+            after_by_id.setdefault(user_id, set()).add(role)
         changed_ids = sorted(
             user_id
             for user_id in set(before_by_id) | set(after_by_id)
@@ -490,6 +498,7 @@ class GameServer:
             await self.sessions.send_user(user_id, {
                 "type": "identity_changed",
                 "role": user.role,
+                "assigned_roles": [role for role in self.role_ids if role in user.assigned_roles],
                 "view_role": user.view_role,
                 "reset": True,
             })
@@ -497,7 +506,7 @@ class GameServer:
                 await self._send_role_view(
                     user.websocket,
                     user.view_role,
-                    include_draft=user.role is not None,
+                    include_draft=user.view_role in user.assigned_roles,
                 )
 
         await self._broadcast_presence()

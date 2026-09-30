@@ -56,6 +56,8 @@ export default function GameApp({
   const serverRejection = useRef("");
   const authRejected = useRef(false);
   const retryTimer = useRef<number | null>(null);
+  const draftTimer = useRef<number | null>(null);
+  const switchingView = useRef(false);
   const retryAttempt = useRef(0);
   const started = useRef(false);
   const sessionRef = useRef<StoredSession>({ roomKey: "", resumeToken: "" });
@@ -112,6 +114,7 @@ export default function GameApp({
     const next = openGameSocket({
       onOpen: () => sendMessage(next, firstMessage),
       onMessage: (message) => {
+        if (message.type === "role_view" || message.type === "error") switchingView.current = false;
         if (message.type === "error") {
           if (message.code === "unauthorized") {
             authRejected.current = true;
@@ -155,7 +158,7 @@ export default function GameApp({
           sessionRef.current = { roomKey: sessionRef.current.roomKey, resumeToken: message.resume_token };
           saveStoredSession(sessionRef.current);
           dispatch({ type: "session", roomKey: sessionRef.current.roomKey, resumeToken: message.resume_token });
-          if (message.type === "joined" && !message.role && !message.view_role && message.roles[0]) {
+          if (message.type === "joined" && message.assigned_roles.length === 0 && !message.view_role && message.roles[0]) {
             sendMessage(next, { type: "view", role: message.roles[0].id });
           }
         }
@@ -274,13 +277,30 @@ export default function GameApp({
   }, []);
 
   useEffect(() => {
-    if (!state.role || state.connection !== "CONNECTED" || state.players[state.role]?.status !== "EDITING") return;
-    const timer = window.setTimeout(() => sendMessage(socket.current, { type: "action", text: state.actionDraft }), 250);
-    return () => window.clearTimeout(timer);
-  }, [state.actionDraft, state.connection, state.role, state.players]);
+    const role = state.viewRole;
+    if (!role || !state.assignedRoles.includes(role) || state.connection !== "CONNECTED"
+      || state.players[role]?.status !== "EDITING" || switchingView.current) return;
+    draftTimer.current = window.setTimeout(() => {
+      sendMessage(socket.current, { type: "action", text: state.actionDrafts[role] ?? "" });
+      draftTimer.current = null;
+    }, 250);
+    return () => {
+      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+      draftTimer.current = null;
+    };
+  }, [state.actionDrafts, state.connection, state.viewRole, state.assignedRoles, state.players]);
 
   const send = (message: ClientMessage) => {
+    if (message.type === "view" && state.viewRole && state.assignedRoles.includes(state.viewRole)) {
+      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+      draftTimer.current = null;
+      if (state.players[state.viewRole]?.status === "EDITING") {
+        sendMessage(socket.current, { type: "action", text: state.actionDrafts[state.viewRole] ?? "" });
+      }
+      switchingView.current = true;
+    }
     if (!sendMessage(socket.current, message)) {
+      switchingView.current = false;
       dispatch({ type: "connection", status: "RECONNECTING" });
     }
   };

@@ -10,6 +10,7 @@ type Props = {
   opening: string;
   spectator: boolean;
   roles: RoleDefinition[];
+  viewRoles?: RoleDefinition[];
   viewDisabled: boolean;
   onView: (role: Role) => void;
 };
@@ -21,6 +22,7 @@ export function StoryView({
   opening,
   spectator,
   roles,
+  viewRoles = roles,
   viewDisabled,
   onView,
 }: Props) {
@@ -49,8 +51,8 @@ export function StoryView({
   return <section className="story-view">
     <div className="story-header">
       <h2>Story{viewRole ? ` · ${characterName || viewRole}` : ""}</h2>
-      {spectator && <div className="role-view-tabs" aria-label="选择角色视角">
-        {roles.map((role) => <button
+      {(spectator || viewRoles.length > 1) && <div className="role-view-tabs" aria-label="选择角色视角">
+        {viewRoles.map((role) => <button
           type="button"
           key={role.id}
           className={viewRole === role.id ? "active" : ""}

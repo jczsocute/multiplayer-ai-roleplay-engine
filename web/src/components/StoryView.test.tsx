@@ -3,6 +3,17 @@ import { describe, expect, it } from "vitest";
 import { StoryView } from "./StoryView";
 
 describe("optional character status", () => {
+  it("shows only assigned role tabs for a multi-role player", () => {
+    const html = renderToStaticMarkup(<StoryView entries={[]} viewRole="P2"
+      characterName="路人乙" opening="" spectator={false}
+      roles={[{ id: "P1", name: "路人甲" }, { id: "P2", name: "路人乙" }, { id: "P3", name: "路人丙" }]}
+      viewRoles={[{ id: "P1", name: "路人甲" }, { id: "P2", name: "路人乙" }]}
+      viewDisabled={false} onView={() => undefined} />);
+    expect(html).toContain("路人甲</button>");
+    expect(html).toContain("路人乙</button>");
+    expect(html).not.toContain("路人丙</button>");
+    expect(html).toContain('class="active" aria-pressed="true"');
+  });
   it("shows only story text when the character has no status", () => {
     const html = renderToStaticMarkup(<StoryView
       entries={[{ kind: "narration", content: "海面渐亮", round: 1 }]}
