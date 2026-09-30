@@ -91,7 +91,7 @@ Runtime，之后继续使用同一套 GameServer 消息；平台资源 API 不�
 
 玩家状态为 `EDITING → READY → PROCESSING`，`PAUSED` 是旁支状态。
 持久化回合 stage 为 `WAITING_INPUT → WORLD_UPDATING → WORLD_DONE →
-NARRATION_GENERATING → FINISHED`；旧存档可能保留 `VIEW_GENERATING` / `VIEW_DONE`，恢复时完整重跑该回合。stage 用于
+NARRATION_GENERATING → FINISHED`；AI 失败时进入 `FAILED`，保留 PROCESSING 玩家状态和原行动，房主可以完整 retry 或 rollback。旧存档可能保留 `VIEW_GENERATING` / `VIEW_DONE`，恢复时完整重跑该回合。stage 用于
 观察执行状态，不是恢复检查点。`game.db` 保存 `world_state`、`rounds`、
 `round_actions`、`chat_messages`、`character_views`、`character_statuses` 与 `players`。新数据库不创建 `public_world_info`；旧库中的历史表仅在 retry/rollback 删除旧轮时清理。WorldUpdater 结果与 `WORLD_DONE` 原子提交。
 
@@ -107,11 +107,11 @@ Narrator 只取最近 `NARRATOR_HISTORY_ROUNDS` 个完整回合，默认 20。
 
 ## Retry、Rollback 与 Recovery
 
-- `/retry` 保留原 actions，从前一轮结果重新运行完整 WorldUpdater + Narrators，并覆盖目标轮输出。
-- `/rollback N` 物理删除 N 之后的回合数据，恢复 Round N 的 world，并从 N+1 的 EDITING 状态继续。
+- `/retry` 保留原 actions，从前一轮结果恢复 world 和角色状态栏，再运行完整 WorldUpdater + Narrators，并覆盖目标轮输出；Round 1 使用初始状态。
+- `/rollback N` 物理删除 N 之后的回合数据，恢复 Round N 的 world 和角色状态栏，并从 N+1 的 EDITING 状态继续。
 - 未完成且非 `WAITING_INPUT` 的 round 在恢复时完整重跑，不从中间 stage 部分续跑。
 - WorldUpdater 或 Narrator 任一步失败，都保留本回合原 actions
-  和 PROCESSING 状态。房主明确 retry 时从基础 world 完整重跑；玩家不能在失败后
+  和 PROCESSING 状态，并广播 `FAILED`。房主明确 retry 时从基础 world 完整重跑；玩家不能在失败后
   修改行动重新提交。没有无限自动重试，也不保证请求级 exactly-once。
 - 时间线始终是单一线性历史，不使用 revision/branch/event sourcing。
 

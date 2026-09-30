@@ -522,7 +522,8 @@ def create_platform_app(
         except PermissionError as exc:
             return _api_error(str(exc), 403)
         except ValueError as exc:
-            return _api_error(str(exc), 404)
+            code = str(exc)
+            return _api_error(code, 409 if code == "game_processing" else 404)
         return JSONResponse({"ok": True})
 
     async def leave_room(request: Request) -> JSONResponse:

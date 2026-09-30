@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
+  closeRoomDisabled,
   defaultRollbackRound,
   hostControlsDisabled,
   parseRollbackRound,
@@ -43,6 +44,7 @@ export function HostControlsDialog({
   const [exportError, setExportError] = useState("");
 
   const disabled = hostControlsDisabled({ connection, processingStage });
+  const processingLocked = processingStage !== null;
   const canKick = connection === "CONNECTED";
   // Only connected members can take a role; everyone with a seat is listed.
   const assignable = users.filter((user) => user.connected !== false);
@@ -133,7 +135,7 @@ export function HostControlsDialog({
             </label>)}
           </div>
           <div className="host-row">
-            <button disabled={disabled || roles.some((role) => !assignments[role.id])}
+            <button disabled={disabled || processingLocked || roles.some((role) => !assignments[role.id])}
               onClick={() => send({ type: "assign_roles", assignments })}>
               应用角色分配
             </button>
@@ -182,7 +184,7 @@ export function HostControlsDialog({
         {exportHistory && <section className="host-section">
           <h3>历史记录</h3>
           <div className="host-row">
-            <button className="secondary" disabled={disabled || exporting}
+            <button className="secondary" disabled={disabled || processingLocked || exporting}
               onClick={async () => {
                 setExporting(true); setExportError("");
                 try {
@@ -193,7 +195,7 @@ export function HostControlsDialog({
               {exporting ? "导出中…" : "导出历史记录"}
             </button>
           </div>
-          {processingStage !== null && <p className="muted">请等待本轮完成……</p>}
+          {processingLocked && <p className="muted">{processingStage === "FAILED" ? "本轮生成失败，请重新生成后导出。" : "请等待本轮完成……"}</p>}
           {exportError && <p className="error-text" role="alert">{exportError}</p>}
         </section>}
 
@@ -222,7 +224,7 @@ export function HostControls(props: HostControlsProps) {
     </button>
   );
   const closeRoomButton = props.closeRoom && (
-    <button className="danger header-button" onClick={() => {
+    <button className="danger header-button" disabled={closeRoomDisabled(props)} onClick={() => {
       if (window.confirm("关闭房间会断开所有用户，但不会删除游戏存档。确定关闭？")) {
         props.closeRoom?.();
       }

@@ -15,6 +15,7 @@ export type ProcessingStage =
   | "VIEW_GENERATING"
   | "VIEW_DONE"
   | "NARRATION_GENERATING"
+  | "FAILED"
   | "FINISHED";
 
 export type StoryEntry = {

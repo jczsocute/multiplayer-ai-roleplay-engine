@@ -10,7 +10,15 @@ export function hostControlsDisabled(state: {
   connection: string;
   processingStage: string | null;
 }): boolean {
-  return state.connection !== "CONNECTED" || state.processingStage !== null;
+  return state.connection !== "CONNECTED" ||
+    (state.processingStage !== null && state.processingStage !== "FAILED");
+}
+
+export function closeRoomDisabled(state: {
+  connection: string;
+  processingStage: string | null;
+}): boolean {
+  return hostControlsDisabled(state);
 }
 
 export function retryMessage(): ClientMessage {

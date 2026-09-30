@@ -178,5 +178,5 @@ export function reducer(state: ClientState, action: ClientAction): ClientState {
 }
 
 function isVisibleStage(stage: string): boolean {
-  return ["WORLD_UPDATING", "VIEW_GENERATING", "NARRATION_GENERATING"].includes(stage);
+  return ["WORLD_UPDATING", "WORLD_DONE", "VIEW_GENERATING", "VIEW_DONE", "NARRATION_GENERATING", "FAILED"].includes(stage);
 }

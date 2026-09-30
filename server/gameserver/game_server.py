@@ -341,6 +341,8 @@ class GameServer:
                     kind, username, str(message.get("text", "")), player_id
                 )
                 return
+            if command in ("retry", "rollback") and self.is_ai_active():
+                raise RoundError("game_processing")
             completed = None
             async with self.command_lock:
                 if command == "leave":
@@ -350,6 +352,8 @@ class GameServer:
                     return
                 player_id = await self.sessions.role_for(user_id)
                 if command in ("retry", "rollback"):
+                    if self.is_ai_active():
+                        raise RoundError("game_processing")
                     if not self.is_host(user_id):
                         raise RoundError(
                             "forbidden: only the game owner can manage the timeline"
@@ -597,6 +601,7 @@ class GameServer:
             await self._set_stage(RoundStage.WORLD_DONE)
         except Exception:
             logger.exception("World update failed for round %s", completed.round_number)
+            await self._set_stage(RoundStage.FAILED)
             await self._broadcast_message({
                 "type": "error",
                 "code": "world_update_failed",
@@ -651,6 +656,7 @@ class GameServer:
                 completed.round_number,
                 [result for result in results if not isinstance(result, dict)],
             )
+            await self._set_stage(RoundStage.FAILED)
             await self._broadcast_message({
                 "type": "error",
                 "detail": "叙事生成失败，房主可以重试本回合",
@@ -723,6 +729,12 @@ class GameServer:
     async def retry_round(self, round_number: int | None = None) -> None:
         async with self.command_lock:
             await self._retry_round_now(round_number)
+
+    def is_ai_active(self) -> bool:
+        return self.rounds.is_ai_active() or (
+            self.command_lock.locked() and self.rounds.is_processing()
+            and self.rounds.stage != RoundStage.FAILED
+        )
 
     async def rollback_to_round(self, round_number: object) -> None:
         async with self.command_lock:

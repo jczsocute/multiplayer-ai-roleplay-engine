@@ -64,15 +64,37 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         game.rounds.begin_reprocess(completed)
         await game._process_round(completed)
         failed = await database.get_recovery_data(1)
-        self.assertEqual(failed["stage"], RoundStage.WORLD_UPDATING)
+        self.assertEqual(failed["stage"], RoundStage.FAILED)
         self.assertEqual(failed["actions"], completed.actions)
         self.assertTrue(failed["locked"])
         self.assertTrue(game.rounds.is_processing())
+        self.assertFalse(game.is_ai_active())
+
+        with self.assertRaises(ValueError):
+            await database.export_history()
 
         await game.retry_round()
         self.assertEqual(updater.calls, 2)
         self.assertEqual(game.rounds.round_number, 2)
         self.assertEqual((await database.get_recovery_data(1))["stage"], RoundStage.FINISHED)
+
+    async def test_narrator_failure_sets_failed_stage(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database = Database(str(Path(directory.name) / "game.db"))
+        await database.initialize(INITIAL_WORLD)
+        completed = CompletedRound(1, {"P1": "open", "P2": "watch"})
+
+        class FailNarrator:
+            async def narrate(self, *_args):
+                raise RuntimeError("LLM unavailable")
+
+        game = GameServer(database, MockWorldUpdater(), FailNarrator(), 1)
+        game.rounds.begin_reprocess(completed)
+        await game._process_round(completed)
+        self.assertEqual((await database.get_recovery_data(1))["stage"], RoundStage.FAILED)
+        self.assertEqual(game.rounds.stage, RoundStage.FAILED)
+        self.assertTrue(game.rounds.is_processing())
 
     async def make_game(self):
         directory = tempfile.TemporaryDirectory()

@@ -228,6 +228,12 @@ class Database:
                 raise RuntimeError(
                     "database roles do not match metadata.json; recreate this game instance"
                 )
+            connection.execute(
+                """INSERT OR IGNORE INTO game_metadata (key, value)
+                   VALUES ('initial_character_statuses', ?)""",
+                (json.dumps({role: (initial_character_statuses or {}).get(role)
+                             for role in self.status_roles}, ensure_ascii=False),),
+            )
             if initial_character_statuses:
                 connection.executemany(
                     """UPDATE players SET character_status_content = ?
@@ -776,6 +782,31 @@ class Database:
             ).fetchone()
         return row[0]
 
+    def _restore_character_statuses_sync(
+        self, connection: sqlite3.Connection, round_number: int
+    ) -> None:
+        if not self.status_roles:
+            return
+        if round_number == 0:
+            row = connection.execute(
+                "SELECT value FROM game_metadata WHERE key = 'initial_character_statuses'"
+            ).fetchone()
+            if row is None:
+                raise ValueError("initial character statuses are not available")
+            statuses = {role: self._as_text(value) if value is not None else None
+                        for role, value in json.loads(row[0]).items()}
+        else:
+            statuses = dict(connection.execute(
+                "SELECT player_id, content FROM character_statuses WHERE round_id = ?",
+                (round_number,),
+            ))
+        if set(statuses) != set(self.status_roles):
+            raise ValueError(f"character statuses for round {round_number} are incomplete")
+        connection.executemany(
+            "UPDATE players SET character_status_content = ? WHERE player_id = ?",
+            ((statuses[role], role) for role in self.status_roles),
+        )
+
     def _prepare_retry_round_sync(self, round_number: int) -> dict[str, str]:
         with self._connect() as connection:
             row = connection.execute(
@@ -790,6 +821,7 @@ class Database:
                     f"round {round_number} has no complete actions to retry"
                 )
             base_world = self._base_world_state_sync(connection, round_number)
+            self._restore_character_statuses_sync(connection, round_number - 1)
             self._delete_rounds_after_sync(connection, round_number)
             for table, column in _round_tables(connection):
                 connection.execute(
@@ -822,6 +854,7 @@ class Database:
                 raise ValueError(f"round {round_number} is not a finished round")
             base_world = row[1]
             self._delete_rounds_after_sync(connection, round_number)
+            self._restore_character_statuses_sync(connection, round_number)
             connection.execute(
                 "INSERT INTO rounds (round_number, status) VALUES (?, 'OPEN')",
                 (round_number + 1,),

@@ -81,6 +81,13 @@ class RoundManager:
             for player in self.players.values()
         )
 
+    def is_ai_active(self) -> bool:
+        return self.stage in {
+            RoundStage.WORLD_UPDATING, RoundStage.WORLD_DONE,
+            RoundStage.VIEW_GENERATING, RoundStage.VIEW_DONE,
+            RoundStage.NARRATION_GENERATING,
+        }
+
     def set_stage(self, stage: RoundStage) -> None:
         self.stage = stage
 

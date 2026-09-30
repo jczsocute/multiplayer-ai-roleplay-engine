@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   defaultRollbackRound,
+  closeRoomDisabled,
   hostControlsDisabled,
   retryConfirmation,
   retryMessage,
@@ -22,6 +23,12 @@ describe("host controls", () => {
   it("is disabled while disconnected or processing", () => {
     expect(hostControlsDisabled({ connection: "CONNECTED", processingStage: null })).toBe(false);
     expect(hostControlsDisabled({ connection: "CONNECTED", processingStage: "WORLD_UPDATING" })).toBe(true);
+    for (const stage of ["WORLD_DONE", "VIEW_GENERATING", "VIEW_DONE", "NARRATION_GENERATING"]) {
+      expect(hostControlsDisabled({ connection: "CONNECTED", processingStage: stage })).toBe(true);
+      expect(closeRoomDisabled({ connection: "CONNECTED", processingStage: stage })).toBe(true);
+    }
+    expect(hostControlsDisabled({ connection: "CONNECTED", processingStage: "FAILED" })).toBe(false);
+    expect(closeRoomDisabled({ connection: "CONNECTED", processingStage: "FAILED" })).toBe(false);
     expect(hostControlsDisabled({ connection: "RECONNECTING", processingStage: null })).toBe(true);
   });
 
@@ -92,5 +99,16 @@ describe("owner state", () => {
       message: { type: "error", detail: "forbidden: only the game owner can manage the timeline" },
     });
     expect(state.errors.at(-1)).toContain("forbidden");
+  });
+
+  it("keeps FAILED visible from both state and stage broadcasts", () => {
+    const players = { P1: { status: "PROCESSING" as const, has_action: true, connected: true } };
+    const failed = reducer(initialState, { type: "server", message: {
+      type: "state", round: 1, stage: "FAILED", players,
+    } });
+    expect(failed.processingStage).toBe("FAILED");
+    expect(reducer(initialState, { type: "server", message: {
+      type: "processing_stage", round: 1, stage: "FAILED",
+    } }).processingStage).toBe("FAILED");
   });
 });

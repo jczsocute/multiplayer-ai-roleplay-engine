@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 
 from server.gameserver.database import Database
 from server.gameserver.game_server import GameServer
+from server.gameserver.models import RoundStage
 from server.platform.catalog import import_template
 from server.platform.database import PlatformDatabase
 from server.platform.room_manager import RoomManager, validate_room_password
@@ -157,6 +158,25 @@ class MultiRoomTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.close_room(room.code, self.alice.id)
         reopened = await self.manager.create_room_from_game(self.alice, self.game_a.id)
         self.assertNotEqual(reopened.code, room.code)
+
+    async def test_close_rejects_active_ai_and_preserves_room_until_failed(self) -> None:
+        room = await self.manager.create_room_from_game(self.alice, self.game_a.id)
+        socket = FakeConnection()
+        await self.manager.enter(self.alice.id, room.code, socket)
+        await room.game_server.sessions.join(self.alice, socket)
+        room.game_server.rounds.set_stage(RoundStage.NARRATION_GENERATING)
+        with self.assertRaisesRegex(ValueError, "game_processing"):
+            await self.manager.close_room(room.code, self.alice.id)
+        self.assertIs(self.manager.get_runtime(room.code), room)
+        self.assertIsNotNone(self.platform.get_room(room.code))
+        self.assertEqual(self.manager.user_current_room(self.alice.id), room.code)
+        self.assertFalse(socket.closed)
+
+        room.game_server.rounds.set_stage(RoundStage.FAILED)
+        await self.manager.close_room(room.code, self.alice.id)
+        self.assertIsNone(self.manager.get_runtime(room.code))
+        self.assertIsNone(self.platform.get_room(room.code))
+        self.assertTrue(socket.closed)
 
     async def test_template_room_failure_removes_only_new_snapshot(self) -> None:
         template = import_template(
@@ -338,6 +358,12 @@ class PlatformRoomTransportTests(unittest.TestCase):
             app = create_platform_app(database, static, room_manager=manager)
             headers = {"cookie": f"rp_auth={token}"}
             with TestClient(app) as client:
+                room.game_server.rounds.set_stage(RoundStage.WORLD_UPDATING)
+                rejected = client.delete(f"/api/rooms/{room.code}", headers=headers)
+                self.assertEqual(rejected.status_code, 409)
+                self.assertEqual(rejected.json()["error"], "game_processing")
+                self.assertIsNotNone(database.get_room(room.code))
+                room.game_server.rounds.set_stage(RoundStage.FAILED)
                 listing = client.get("/api/rooms", headers=headers).json()["rooms"]
                 self.assertEqual(listing[0]["code"], room.code)
                 self.assertTrue(listing[0]["has_password"])

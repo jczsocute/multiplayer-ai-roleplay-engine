@@ -75,12 +75,14 @@ class ExplodingDatabase(Database):
 
 
 class TimelineTests(unittest.IsolatedAsyncioTestCase):
-    async def make_server(self, owner_user_id: int = 1, database_cls=Database):
+    async def make_server(self, owner_user_id: int = 1, database_cls=Database,
+                          initial_statuses=None, status_roles=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         role_config = RoleConfig.from_data({"count": 3, "names": list(NAMES)})
-        database = database_cls(str(Path(directory.name) / "game.db"), role_config.role_ids)
-        await database.initialize(INITIAL_WORLD)
+        database = database_cls(str(Path(directory.name) / "game.db"), role_config.role_ids,
+                                status_roles)
+        await database.initialize(INITIAL_WORLD, initial_statuses)
         updater = RecordingWorldUpdater()
         narrator = RecordingNarrator()
         server = GameServer(
@@ -114,6 +116,27 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
         return target
 
     # --- retry ---------------------------------------------------------------
+
+    async def test_retry_restores_statusbar_before_world_update(self) -> None:
+        initial = {role: {"hp": 1} for role in ROLES}
+        server, database, _, _ = await self.make_server(initial_statuses=initial)
+        await self.submit_round(server, ROUND_1)
+        await self.submit_round(server, ROUND_2)
+        await database.prepare_retry_round(2)
+        for role in ROLES:
+            self.assertEqual((await database.get_player_display(role))["character_status"], {"hp": 11})
+        await database.prepare_retry_round(1)
+        for role in ROLES:
+            self.assertEqual((await database.get_player_display(role))["character_status"], {"hp": 1})
+
+    async def test_retry_without_status_schema_leaves_role_unaffected(self) -> None:
+        server, database, _, _ = await self.make_server(
+            initial_statuses={"P1": {"hp": 1}}, status_roles=("P1",)
+        )
+        await self.submit_round(server, ROUND_1)
+        await database.prepare_retry_round(1)
+        self.assertEqual((await database.get_player_display("P1"))["character_status"], {"hp": 1})
+        self.assertIsNone((await database.get_player_display("P2"))["character_status"])
 
     async def test_retry_first_round_reruns_everything_from_initial_world(self) -> None:
         server, database, updater, narrator = await self.make_server()
@@ -214,7 +237,39 @@ class TimelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("没有可重新生成的回合", self.ws.errors()[-1])
         self.assertEqual(updater.calls, [])
 
+    async def test_retry_and_rollback_rejected_during_active_ai(self) -> None:
+        server, _, _, _ = await self.make_server()
+        server.rounds.set_stage(RoundStage.WORLD_UPDATING)
+        await self.send(server, 1, {"type": "retry"})
+        await self.send(server, 1, {"type": "rollback", "round": 1})
+        self.assertEqual(self.ws.errors()[-2:], ["game_processing", "game_processing"])
+
+    async def test_world_failure_broadcasts_failed_and_keeps_players_locked(self) -> None:
+        server, _, updater, _ = await self.make_server()
+
+        async def fail_update(*_args, **_kwargs):
+            raise RuntimeError("LLM unavailable")
+
+        updater.update = fail_update
+        await self.submit_round(server, ROUND_1)
+        self.assertEqual(server.rounds.stage, RoundStage.FAILED)
+        self.assertTrue(server.rounds.is_processing())
+        for socket in self.sockets.values():
+            self.assertTrue(any(message.get("type") == "processing_stage"
+                                and message.get("stage") == "FAILED"
+                                for message in socket.messages))
+
     # --- rollback ------------------------------------------------------------
+
+    async def test_rollback_restores_current_statusbar(self) -> None:
+        server, database, _, _ = await self.make_server(
+            initial_statuses={role: {"hp": 1} for role in ROLES}
+        )
+        await self.submit_round(server, ROUND_1)
+        await self.submit_round(server, ROUND_2)
+        await database.rollback_to_round(1)
+        for role in ROLES:
+            self.assertEqual((await database.get_player_display(role))["character_status"], {"hp": 11})
 
     async def test_rollback_deletes_later_rounds_and_restores_world(self) -> None:
         server, database, _, _ = await self.make_server()

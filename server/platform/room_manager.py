@@ -265,6 +265,9 @@ class RoomManager:
         if not admin and room.owner_user_id != owner_user_id:
             raise PermissionError("forbidden")
         async with self._lock:
+            runtime = self.rooms.get(code)
+            if runtime is not None and runtime.game_server.is_ai_active():
+                raise ValueError("game_processing")
             runtime = self.rooms.pop(code, None)
             members = [user for user, joined in self.user_room.items() if joined == code]
             for user_id in members:
