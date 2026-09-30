@@ -16,6 +16,7 @@ from server.platform.database import PlatformDatabase
 from server.platform.scenario_manager import ScenarioManager
 from server.platform.room_manager import RoomManager
 from server.platform.web import create_platform_app, serve_platform
+from server.platform.starter_templates import seed_starter_templates
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ def main() -> None:
     action.add_argument("--import-template")
     action.add_argument("--import-game")
     action.add_argument("--bootstrap-templates", action="store_true")
+    action.add_argument("--seed-starter-templates", action="store_true")
     action.add_argument("--set-admin")
     action.add_argument("--unset-admin")
     action.add_argument(
@@ -102,6 +104,12 @@ def main() -> None:
         return
 
     database, settings = _database()
+    if args.seed_starter_templates:
+        from pathlib import Path
+        for user in database.list_users():
+            created = seed_starter_templates(database, Path(manager.templates_dir), user.id)
+            print(f"{user.username}: seeded {len(created)} starter template(s)")
+        return
     if args.set_admin or args.unset_admin:
         username = args.set_admin or args.unset_admin
         try:

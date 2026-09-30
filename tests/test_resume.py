@@ -150,6 +150,7 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
             "type": "room_message", "kind": "system", "sender": None,
             "role": None, "character_name": None,
             "text": "您目前身份为 <观众>。请等待房主分配角色。",
+            "message_key": "identity_spectator", "params": {},
         })
         self.assertEqual(identity_notices(watcher), [])
         self.assertIn("Alice 已加入房间。", [

@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { RoomMessage } from "../protocol";
 import { MAX_ROOM_CHAT_LENGTH } from "../protocol";
+import { localizedRoomMessage, useLanguage } from "../i18n";
 
-function prefix(message: RoomMessage): string {
-  if (message.kind === "system") return "系统";
-  if (message.kind === "host") return "管理员";
+function prefix(message: RoomMessage, language: "zh" | "en"): string {
+  if (message.kind === "system") return language === "en" ? "System" : "系统";
+  if (message.kind === "host") return language === "en" ? "Host" : "管理员";
   if (message.kind === "player") return `${message.sender ?? ""}${message.character_name ? ` (${message.character_name})` : ""}`;
-  return message.sender ?? "观众";
+  return message.sender ?? (language === "en" ? "Spectator" : "观众");
 }
 type Props = { messages: RoomMessage[]; draft: string; disabled?: boolean; onDraft: (text: string) => void; onSend: () => void };
 export function RoomChat({ messages, draft, disabled, onDraft, onSend }: Props) {
+  const { language } = useLanguage();
   const scroll = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
@@ -28,8 +30,8 @@ export function RoomChat({ messages, draft, disabled, onDraft, onSend }: Props) 
     <h2>房间聊天</h2>
     <div className="chat-scroll" ref={scroll} onScroll={onScroll}>
       {messages.length === 0 && <p className="muted">本次连接尚无消息。</p>}
-      {messages.map((message, index) => <p className={`chat-message message-${message.kind}`} key={index}>
-        <strong>[{prefix(message)}]</strong> {message.text}
+      {messages.map((message, index) => <p data-no-i18n className={`chat-message message-${message.kind}`} key={index}>
+        <strong>[{prefix(message, language)}]</strong> {localizedRoomMessage(message, language)}
       </p>)}
       {showJump && <button className="jump-latest" onClick={() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }}>↓ 查看最新</button>}
     </div>

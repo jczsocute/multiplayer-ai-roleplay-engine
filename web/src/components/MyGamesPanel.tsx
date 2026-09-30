@@ -4,6 +4,7 @@ import {
   toggledRow,
 } from "../lobby";
 import type { GameItem } from "../types";
+import { uiConfirm, uiPrompt } from "../i18n";
 
 type Props = {
   games: GameItem[];
@@ -22,7 +23,7 @@ export function MyGamesPanel({ games, busy, error, onLoad, onRename, onCopy, onD
   const sorted = useMemo(() => sortedByUpdated(games), [games]);
 
   const rename = (game: GameItem) => {
-    const name = window.prompt(renamePrompt("存档", game.name), game.name);
+    const name = uiPrompt(renamePrompt("存档", game.name), game.name);
     if (name !== null && name.trim() && name.trim() !== game.name) {
       onRename(game, name.trim());
     }
@@ -43,11 +44,11 @@ export function MyGamesPanel({ games, busy, error, onLoad, onRename, onCopy, onD
         <button onClick={() => onLoad(game)}>读取存档</button>
         <button className="secondary" onClick={() => rename(game)}>重命名</button>
         <button className="secondary" onClick={() => {
-          if (window.confirm(copyConfirmation("存档", game.name))) onCopy(game);
+          if (uiConfirm(copyConfirmation("存档", game.name))) onCopy(game);
         }}>复制</button>
         <button className="secondary" onClick={() => onExportHistory(game)}>导出世界信息</button>
         <button className="danger" onClick={() => {
-          if (window.confirm(deleteConfirmation("存档", game.name, "存档内容会被删除。"))) {
+          if (uiConfirm(deleteConfirmation("存档", game.name, "存档内容会被删除。"))) {
             onDelete(game);
           }
         }}>删除</button>

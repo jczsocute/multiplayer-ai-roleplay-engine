@@ -132,7 +132,12 @@ class EmptyPlatformWebTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = PlatformDatabase(Path(directory) / "platform.db")
             database.initialize()
-            app = create_platform_app(database, Path(directory) / "static")
+            from server.platform.room_manager import RoomManager
+            root = Path(directory)
+            app = create_platform_app(
+                database, root / "static",
+                room_manager=RoomManager(database, root / "games", root / "templates"),
+            )
             with TestClient(app) as client:
                 self.assertEqual(client.get("/api/me").status_code, 401)
                 registered = client.post(
@@ -141,7 +146,10 @@ class EmptyPlatformWebTests(unittest.TestCase):
                 )
                 self.assertEqual(registered.status_code, 201)
                 self.assertEqual(client.get("/api/me").json()["username"], "Alice")
-                self.assertEqual(client.get("/api/templates").json(), {"templates": []})
+                self.assertEqual(
+                    {item["name"] for item in client.get("/api/templates").json()["templates"]},
+                    {"石头剪刀布", "Rock, Paper, Scissors"},
+                )
                 self.assertEqual(client.get("/api/games").json(), {"games": []})
                 self.assertEqual(client.get("/api/rooms").json(), {"rooms": []})
 

@@ -353,6 +353,7 @@ export default function GameApp({
       onLogout={logout} />;
   }
   return <GameScreen state={state} send={send} setAction={(text) => dispatch({ type: "action_draft", text })}
+    roomCode={platformRoom?.code}
     setChat={(text) => dispatch({ type: "chat_draft", text })} sendChat={sendChat} leave={logout}
     closeRoom={state.isHost ? () => void closePlatformRoom?.() : undefined}
     exportHistory={platformRoom && state.isHost

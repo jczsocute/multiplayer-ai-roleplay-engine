@@ -13,6 +13,7 @@ from server.gameserver.template import validate_template
 from server.platform.catalog import import_template, require_owned_template
 from server.platform.database import PlatformDatabase
 from server.platform.models import TemplateMetadata as TemplateRecord
+from server.platform.starter_templates import MARKER as STARTER_MARKER
 
 logger = logging.getLogger(__name__)
 MAX_ZIP_BYTES = 8 * 1024 * 1024
@@ -108,7 +109,9 @@ def export_template_payload_zip(root: Path) -> bytes:
     entries = list(root.rglob("*"))
     if any(path.is_symlink() for path in entries):
         raise ValueError("invalid_template_zip")
-    files = sorted(path for path in entries if path.is_file())
+    # The private seed marker is catalog bookkeeping, not Template content.
+    files = sorted(path for path in entries if path.is_file()
+                   and path.relative_to(root).as_posix() != STARTER_MARKER)
     if any(not _allowed(path.relative_to(root).as_posix())
            for path in files):
         raise ValueError("invalid_template_zip")
@@ -150,6 +153,9 @@ def import_template_zip(
                 introduction=metadata.introduction, tags=metadata.tags,
             )
         target = templates_dir / template_id
+        marker = target / STARTER_MARKER
+        if marker.is_file():
+            (staging / STARTER_MARKER).write_bytes(marker.read_bytes())
         target.rename(backup)
         try:
             staging.rename(target)

@@ -1,4 +1,5 @@
 import type { PlayerState, Role, RoleDefinition } from "../protocol";
+import { translateUi, useLanguage } from "../i18n";
 
 const labels: Record<string, string> = { EDITING: "编辑中", READY: "已提交", PAUSED: "已暂停", PROCESSING: "处理中" };
 
@@ -6,6 +7,7 @@ export function PlayerStates({ players, roles }: {
   players: Partial<Record<Role, PlayerState>>;
   roles: RoleDefinition[];
 }) {
+  const { language } = useLanguage();
   return <div className="player-states">{roles.map(({ id: role, name: configuredName }) => {
     const player = players[role];
     const name = player?.character_name || configuredName || role;
@@ -18,7 +20,7 @@ export function PlayerStates({ players, roles }: {
     const stateClass = player ? `state-${player.status.toLowerCase()}` : "state-empty";
     return <div className={`player-state ${stateClass}`} key={role}
       title={player?.user ? `${name} · ${player.user}` : name}>
-      <span>{name} {status}</span>
+      <span>{name} {translateUi(status, language)}</span>
     </div>;
   })}</div>;
 }

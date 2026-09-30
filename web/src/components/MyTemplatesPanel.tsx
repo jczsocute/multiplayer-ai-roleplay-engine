@@ -5,6 +5,7 @@ import {
   visibilityToggleLabel,
 } from "../lobby";
 import type { TemplateItem } from "../types";
+import { uiConfirm, uiPrompt } from "../i18n";
 import { downloadAdvancedTemplateZip } from "../templateZip";
 
 type Props = {
@@ -40,7 +41,7 @@ export function MyTemplatesPanel({
   const sorted = useMemo(() => sortedByUpdated(templates), [templates]);
 
   const rename = (template: TemplateItem) => {
-    const value = window.prompt(renamePrompt("剧本", template.name), template.name);
+    const value = uiPrompt(renamePrompt("剧本", template.name), template.name);
     if (value !== null && value.trim() && value.trim() !== template.name) {
       onRename(template, value.trim());
     }
@@ -115,10 +116,10 @@ export function MyTemplatesPanel({
         </button>
         <button className="secondary" onClick={() => rename(template)}>重命名</button>
         <button className="secondary" onClick={() => {
-          if (window.confirm(copyConfirmation("剧本", template.name))) onCopy(template);
+          if (uiConfirm(copyConfirmation("剧本", template.name))) onCopy(template);
         }}>复制</button>
         <button className="danger" onClick={() => {
-          if (window.confirm(deleteConfirmation("剧本", template.name, "已用它创建的存档不受影响。"))) {
+          if (uiConfirm(deleteConfirmation("剧本", template.name, "已用它创建的存档不受影响。"))) {
             onDelete(template);
           }
         }}>删除</button>

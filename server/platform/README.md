@@ -85,6 +85,7 @@ Template → Game 先复制到临时目录，创建 catalog metadata 后再改�
 Platform SQLite 使用短连接、5 秒 busy timeout 和 WAL；不改变现有 metadata schema。
 
 Template 可用条件：当前用户是 owner，或 `is_public = true`。Game 只列给它的 owner。
+注册后自动为账号复制 `templates/example1/` 与 `templates/example1_en/` 两个私有 starter 剧本，和普通用户剧本一样可编辑、复制、删除、建房。现有账号可运行 `python -m server.main --seed-starter-templates` 幂等补齐；普通启动不会反复恢复已删除的 starter。
 
 ## Lobby、HTTP 与 WebSocket
 
@@ -94,6 +95,7 @@ Web 登录后进入 Lobby：主页显示活跃房间与仅含公开剧本的“�
 加入房间、我的剧本、我的存档在悬浮面板中操作。“我的剧本”仅列本人资源，
 创建房间的剧本选择器则包含本人全部剧本和其他用户的公开剧本。新建剧本会
 复制默认 scaffold 并生成所选角色数的文件，随后直接打开基础 Web Editor。
+Lobby 的 starter 区域按 payload 的 `starter` tag 展示本人的示例剧本，点击后预选现有创建房间表单。房间内邀请链接仅携带 `?room=CODE`；登录后复用加入面板，密码仍需手动输入。Web 可切换中文 / English，浏览器保存选择。
 
 大厅公告由项目根目录的 `announcement.md` 提供，仅登录用户可通过
 `GET /api/announcement` 读取。该运行文件不提交 Git；部署时可执行
@@ -174,8 +176,8 @@ GET    /api/rooms/<code>/history.zip 房主下载当前 Room 存档历史 ZIP
 - `templates/default/` 是新建剧本的唯一基础目录，保留通用的世界和角色视角 schema、
   世界更新与叙事 Prompt；故事文字和创作要求为空，默认不启用状态栏。
   `templates/default_en/` 是英文基础模板展示；`templates/example1/` 与
-  `templates/example1_en/` 是中英文完整剧本案例。这三个展示目录不进入场景列表，
-  也不能直接实例为 Game。
+  `templates/example1_en/` 是中英文 starter 源目录。注册时只复制后两者到用户自己的
+  Template 目录；副本进入目录并可正常创建 Game，仓库源目录本身不作为 catalog 条目。
 - 基础编辑器只写 `metadata.json` 的 title/introduction/tags、`world/world.md`、
   `characters/N/character.md` / `opening.md` 与 `prompts/ai_guidelines.md`。
   新增末尾角色时创建最小 view schema，不启用 status；减少角色时删除末尾目录。

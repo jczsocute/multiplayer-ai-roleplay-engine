@@ -105,6 +105,7 @@ Platform 为存档 owner 打包 JSON ZIP；处理中不导出，回滚后已物�
 Story Plane 持久化并可进入 AI context；Room Chat / presence / notice 仅在内存广播，不进入单局故事历史。角色 Opening 同样不进入 AI context。
 每次 join 或 resume 成功后，GameServer 还会向该连接单独发送一条 `room_message`
 系统提示，说明当前是房主、所扮演的角色名称或观众；这条提示不广播、不持久化。
+正常游戏路径的系统 Room 消息附带可选 `message_key` / `params` 供英文 Web 显示；`text` 仍保留中文 fallback。玩家聊天和 AI 叙事不翻译。
 Room Chat 不获取 Story 命令锁，所以 AI 生成期间仍可交流。显示历史完整保留；
 Narrator 只取最近 `NARRATOR_HISTORY_ROUNDS` 个完整回合，默认 20。
 

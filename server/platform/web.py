@@ -35,6 +35,7 @@ from server.platform.template_zip import (
 )
 from server.platform.websocket_adapter import DISCONNECTS, WebSocketConnection
 from server.platform.security import is_loopback_host, origin_allowed
+from server.platform.starter_templates import seed_starter_templates
 
 logger = logging.getLogger(__name__)
 ANNOUNCEMENT_PATH = Path(__file__).resolve().parents[2] / "announcement.md"
@@ -104,6 +105,9 @@ def create_platform_app(
             return JSONResponse(
                 {"error": "invalid_account", "detail": str(exc)}, status_code=400
             )
+        await asyncio.to_thread(
+            seed_starter_templates, database, Path(room_manager.templates_dir), user.id
+        )
         token = await asyncio.to_thread(
             database.create_session, user.id, auth_session_days
         )

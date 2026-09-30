@@ -10,6 +10,7 @@ import type { AuthUser } from "./protocol";
 import type { GameItem, RoomItem, TemplateItem } from "./types";
 import { downloadTemplateZip, uploadTemplateZip } from "./templateZip";
 import { downloadGameHistory } from "./gameHistory";
+import { invitedRoom } from "./invite";
 
 type UiConfig = {
   platform_mode?: boolean;
@@ -61,6 +62,7 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
   roleCounts: number[];
 }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [inviteCode, setInviteCode] = useState(() => invitedRoom(window.location.search));
   const [checked, setChecked] = useState(false);
   // `templates` = usable Scripts (own + public) for the Create Room selector;
   // `publicTemplates` = the 剧本广场 list (public only).
@@ -292,6 +294,13 @@ function PlatformApp({ allowRegistration, roleCounts: counts }: {
     roleCounts={counts} onBack={() => setEditingTemplateId(null)}
     onSaved={async () => { await refreshAll(); }} />;
   return <PlatformHome
+    inviteCode={inviteCode}
+    onInviteConsumed={() => {
+      setInviteCode(null);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("room");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }}
     userId={user.id} username={user.username} roleCounts={counts}
     templates={templates} publicTemplates={publicTemplates}
     myTemplates={myTemplates} games={games} rooms={rooms} currentRoom={currentRoom}

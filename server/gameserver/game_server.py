@@ -162,7 +162,8 @@ class GameServer:
                 await self._broadcast_state()
                 await self._send_resume_view(participant, websocket)
                 await self._broadcast_room_message(
-                    "system", f"{participant.username} 已重新连接。"
+                    "system", f"{participant.username} 已重新连接。",
+                    message_key="user_reconnected", params={"name": participant.username},
                 )
                 await self._send_identity_notice(participant, websocket)
 
@@ -210,24 +211,33 @@ class GameServer:
         if result.replaced_connection is not None:
             await self._notify_replaced(result)
             text = f"{result.user.username} 已在新的连接中接管本局。"
+            key = "user_replaced"
         elif result.created:
             text = f"{result.user.username} 已加入房间。"
+            key = "user_joined"
         else:
             text = f"{result.user.username} 已重新连接。"
-        await self._broadcast_room_message("system", text)
+            key = "user_reconnected"
+        await self._broadcast_room_message(
+            "system", text, message_key=key, params={"name": result.user.username}
+        )
 
     async def _send_identity_notice(self, participant: User, websocket: Connection) -> None:
         if self.is_host(participant.user_id):
             text = "您目前身份为 <房主>。"
+            key, params = "identity_host", {}
         elif participant.assigned_roles:
             names = "、".join(self.character_names[role] for role in self.role_ids
                              if role in participant.assigned_roles)
             text = f"您目前扮演 <{names}>。请继续游戏。"
+            key, params = "identity_roles", {"names": names}
         else:
             text = "您目前身份为 <观众>。请等待房主分配角色。"
+            key, params = "identity_spectator", {}
         await websocket.send(json.dumps({
             "type": "room_message", "kind": "system", "sender": None,
             "role": None, "character_name": None, "text": text,
+            "message_key": key, "params": params,
         }, ensure_ascii=False))
 
     async def _notify_replaced(self, result: JoinResult) -> None:
@@ -316,7 +326,10 @@ class GameServer:
         for role in self.role_ids:
             if role in roles:
                 text += f" Player {role} 当前无人扮演。"
-        await self._broadcast_room_message("system", text)
+        await self._broadcast_room_message(
+            "system", text, message_key="user_kicked" if reason else "user_left",
+            params={"name": username, "roles": ", ".join(sorted(roles))},
+        )
         await self._notify_member_left(user_id)
 
     async def _notify_member_left(self, user_id: int) -> None:
@@ -416,12 +429,14 @@ class GameServer:
                 elif command == "pause":
                     self.rounds.pause(player_id)
                     await self._broadcast_room_message(
-                        "system", f"Player {player_id} 已暂停。"
+                        "system", f"Player {player_id} 已暂停。",
+                        message_key="role_paused", params={"role": player_id},
                     )
                 elif command == "resume":
                     self.rounds.resume(player_id)
                     await self._broadcast_room_message(
-                        "system", f"Player {player_id} 已恢复。"
+                        "system", f"Player {player_id} 已恢复。",
+                        message_key="role_resumed", params={"role": player_id},
                     )
                 else:
                     raise RoundError(f"未知指令：{command}")
@@ -519,6 +534,8 @@ class GameServer:
                 f"{labels[role]} → {role}" for role in self.role_ids
             )
             + "。",
+            message_key="roles_assigned",
+            params={"assignments": ", ".join(f"{labels[role]} → {role}" for role in self.role_ids)},
         )
 
     async def close_connections(self, detail: str = "房间已关闭") -> None:
@@ -586,6 +603,8 @@ class GameServer:
         text: str,
         sender: str | None = None,
         role: str | None = None,
+        message_key: str | None = None,
+        params: dict | None = None,
     ) -> None:
         message = {
             "type": "room_message",
@@ -595,6 +614,9 @@ class GameServer:
             "character_name": self.character_names.get(role) if role else None,
             "text": text,
         }
+        if message_key is not None:
+            message["message_key"] = message_key
+            message["params"] = params or {}
         await self.sessions.broadcast(message)
 
     async def _process_round(self, completed: CompletedRound) -> None:
@@ -775,7 +797,8 @@ class GameServer:
             player = self.rounds.players[role_id]
             await self.database.save_player(role_id, player.status, player.action)
         await self._broadcast_room_message(
-            "system", f"正在使用原行动重新生成 Round {round_number}…"
+            "system", f"正在使用原行动重新生成 Round {round_number}…",
+            message_key="round_retry", params={"round": round_number},
         )
         await self._broadcast_state()
         await self._process_round(completed)
@@ -793,7 +816,8 @@ class GameServer:
             player = self.rounds.players[role_id]
             await self.database.save_player(role_id, player.status, player.action)
         await self._broadcast_room_message(
-            "system", f"已回滚到 Round {round_number}，之后的剧情已删除。"
+            "system", f"已回滚到 Round {round_number}，之后的剧情已删除。",
+            message_key="round_rollback", params={"round": round_number},
         )
         await self._broadcast_state()
         await self._broadcast_role_views()

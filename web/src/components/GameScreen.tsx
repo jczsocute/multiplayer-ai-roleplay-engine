@@ -7,6 +7,9 @@ import { PlayerStates } from "./PlayerStates";
 import { RoomChat } from "./RoomChat";
 import { RoundView } from "./RoundView";
 import { StoryView } from "./StoryView";
+import { inviteLink } from "../invite";
+import { useState } from "react";
+import { useLanguage } from "../i18n";
 
 type Props = {
   state: ClientState;
@@ -17,6 +20,7 @@ type Props = {
   leave: () => void;
   closeRoom?: () => void;
   exportHistory?: () => Promise<string | null>;
+  roomCode?: string;
   setTab: (tab: MobileTab) => void;
 };
 
@@ -29,7 +33,9 @@ const connectionLabel: Record<string, string> = {
   ERROR: "连接错误",
 };
 
-export function GameScreen({ state, send, setAction, setChat, sendChat, leave, closeRoom, exportHistory, setTab }: Props) {
+export function GameScreen({ state, send, setAction, setChat, sendChat, leave, closeRoom, exportHistory, roomCode, setTab }: Props) {
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const { language } = useLanguage();
   const activeRole = state.viewRole && state.assignedRoles.includes(state.viewRole)
     ? state.viewRole : null;
   const ownStatus = activeRole ? state.players[activeRole]?.status : undefined;
@@ -57,6 +63,10 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
         </p>
       </div>
       <div className="header-actions">
+        {roomCode && <button className="secondary header-button" onClick={async () => {
+          await navigator.clipboard.writeText(inviteLink(window.location.origin, roomCode));
+          setCopiedInvite(true);
+        }}>{copiedInvite ? "已复制邀请链接" : "复制邀请链接"}</button>}
         {host && (
           <HostControls
             connection={state.connection}
@@ -74,7 +84,7 @@ export function GameScreen({ state, send, setAction, setChat, sendChat, leave, c
       </div>
     </header>
     {state.connection === "RECONNECTING" && <div className="disconnect-banner">
-      正在重新连接… 若超过 {state.roomDisconnectTimeoutSeconds} 秒仍未恢复，会话可能已失效。
+      {language === "en" ? `Reconnecting… If it takes over ${state.roomDisconnectTimeoutSeconds} seconds, the session may have expired.` : `正在重新连接… 若超过 ${state.roomDisconnectTimeoutSeconds} 秒仍未恢复，会话可能已失效。`}
       <button className="secondary" onClick={leave}>返回登录页</button>
     </div>}
     {state.errors.length > 0 && <div className="error-banner">{state.errors.at(-1)}</div>}

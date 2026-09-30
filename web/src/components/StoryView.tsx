@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Role, RoleDefinition, StoryEntry } from "../protocol";
 import { DialogueText } from "./DialogueText";
 import { StatusView } from "./StatusView";
+import { translateUi, useLanguage } from "../i18n";
 
 type Props = {
   entries: StoryEntry[];
@@ -26,6 +27,7 @@ export function StoryView({
   viewDisabled,
   onView,
 }: Props) {
+  const { language } = useLanguage();
   const scroll = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
@@ -62,26 +64,26 @@ export function StoryView({
         >{role.name}</button>)}
       </div>}
     </div>
-    <div className="story-scroll" ref={scroll} onScroll={onScroll}>
-      {!viewRole && <p className="muted">选择一个角色查看历史。</p>}
+    <div className="story-scroll" data-no-i18n ref={scroll} onScroll={onScroll}>
+      {!viewRole && <p className="muted">{translateUi("选择一个角色查看历史。", language)}</p>}
       {viewRole && opening && <article className="story-entry story-opening">
-        <div className="story-kind">开场</div>
+        <div className="story-kind">{translateUi("开场", language)}</div>
         <p><DialogueText text={opening} /></p>
       </article>}
-      {viewRole && entries.length === 0 && <p className="muted">尚无已完成回合。</p>}
+      {viewRole && entries.length === 0 && <p className="muted">{translateUi("尚无已完成回合。", language)}</p>}
       {entries.map((entry, index) => {
         if (entry.kind === "character_status") {
           return <details className="statusbar-card" key={`${entry.round ?? "live"}-statusbar-${index}`}>
-            <summary>状态 · 第 {entry.round ?? "—"} 回合</summary>
+            <summary>{language === "en" ? `Status · Round ${entry.round ?? "—"}` : `状态 · 第 ${entry.round ?? "—"} 回合`}</summary>
             <StatusView value={entry.content} />
           </details>;
         }
         return <article className={`story-entry story-${entry.kind}`} key={`${entry.round ?? "live"}-${entry.kind}-${index}`}>
-          {entry.kind === "action" && <div className="story-kind">行动{entry.round ? ` · Round ${entry.round}` : ""}</div>}
+          {entry.kind === "action" && <div className="story-kind">{language === "en" ? "Action" : "行动"}{entry.round ? ` · Round ${entry.round}` : ""}</div>}
           <p><DialogueText text={String(entry.content ?? "")} /></p>
         </article>;
       })}
-      {showJump && <button className="jump-latest" onClick={jumpToLatest}>↓ 查看最新</button>}
+      {showJump && <button className="jump-latest" onClick={jumpToLatest}>{translateUi("↓ 查看最新", language)}</button>}
     </div>
   </section>;
 }

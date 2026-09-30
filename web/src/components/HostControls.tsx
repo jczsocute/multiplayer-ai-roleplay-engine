@@ -13,6 +13,7 @@ import {
   rollbackRoundInput,
 } from "../host";
 import type { ClientMessage, RoleDefinition } from "../protocol";
+import { translateUi, uiConfirm, useLanguage } from "../i18n";
 
 export type RoomMember = {
   user_id?: number;
@@ -38,6 +39,7 @@ export type HostControlsProps = {
 export function HostControlsDialog({
   connection, processingStage, round, ownerUserId, roles, users, send, exportHistory, onClose,
 }: HostControlsProps & { onClose: () => void }) {
+  const { language } = useLanguage();
   const [confirming, setConfirming] = useState<"retry" | "rollback" | null>(null);
   const [target, setTarget] = useState(() => rollbackRoundInput(round));
   const [assignments, setAssignments] = useState<Record<string, number>>({});
@@ -76,7 +78,7 @@ export function HostControlsDialog({
       <section className="host-controls">
         <div className="host-controls-head">
           <strong>房主管理</strong>
-          <span className="muted">当前第 {round ?? "—"} 回合</span>
+          <span className="muted">{language === "en" ? `Current round ${round ?? "—"}` : `当前第 ${round ?? "—"} 回合`}</span>
           <button className="secondary compact-button host-close" onClick={onClose}>✕ 关闭</button>
         </div>
 
@@ -84,7 +86,7 @@ export function HostControlsDialog({
           <h3>重新生成</h3>
           {confirming === "retry" ? (
             <div className="host-confirm">
-              <p className="muted">{retryConfirmation()}</p>
+              <p className="muted">{language === "en" ? "Regenerate the last round using the same actions. Current next-round drafts will be cleared." : retryConfirmation()}</p>
               <div className="host-confirm-actions">
                 <button
                   disabled={disabled}
@@ -150,7 +152,7 @@ export function HostControlsDialog({
           <h3>回滚剧情</h3>
           {confirming === "rollback" && rollbackRound !== null ? (
             <div className="host-confirm">
-              <p className="muted">{rollbackConfirmation(rollbackRound)}</p>
+              <p className="muted">{language === "en" ? `Roll back to Round ${rollbackRound}? Later rounds and actions will be deleted.` : rollbackConfirmation(rollbackRound)}</p>
               <div className="host-confirm-actions">
                 <button
                   disabled={disabled}
@@ -229,7 +231,7 @@ export function HostControls(props: HostControlsProps) {
   );
   const closeRoomButton = props.closeRoom && (
     <button className="danger header-button" disabled={closeRoomDisabled(props)} onClick={() => {
-      if (window.confirm("关闭房间会断开所有用户，但不会删除游戏存档。确定关闭？")) {
+      if (uiConfirm("关闭房间会断开所有用户，但不会删除游戏存档。确定关闭？")) {
         props.closeRoom?.();
       }
     }}>关闭房间</button>

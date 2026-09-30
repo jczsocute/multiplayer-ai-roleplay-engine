@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { markAnnouncementSeen } from "../announcement";
+import { ProjectFooter } from "../i18n";
 import { apiGet } from "../api";
 import {
   LOBBY_TITLE, MAX_LOBBY_ROWS, mayManageRoom, pickRandom, roomIsFull,
@@ -16,7 +17,13 @@ import { TemplateDetailPanel } from "./TemplateDetailPanel";
 
 type Panel = "none" | "create" | "join" | "templates" | "games" | "announcement";
 
+export function starterPreset(template: TemplateItem): CreateRoomPreset {
+  return { source: "template", id: template.id, name: template.name };
+}
+
 type Props = {
+  inviteCode?: string | null;
+  onInviteConsumed?: () => void;
   userId: number;
   username: string;
   roleCounts: number[];
@@ -75,6 +82,13 @@ export function PlatformHome(props: Props) {
     }
     setPanel("announcement");
   }, [props.userId]);
+
+  useEffect(() => {
+    if (!props.inviteCode) return;
+    setJoinCode(props.inviteCode);
+    setPanel("join");
+    props.onInviteConsumed?.();
+  }, [props.inviteCode]);
 
   useEffect(() => {
     if (panel !== "announcement" || announcementContent !== null) return;
@@ -156,6 +170,23 @@ export function PlatformHome(props: Props) {
       <button onClick={() => setPanel("templates")}>我的剧本</button>
       <button onClick={() => setPanel("games")}>我的存档</button>
     </nav>
+
+    {props.myTemplates.some((template) => template.tags?.includes("starter")) &&
+      <section className="panel starter-panel">
+        <h2>第一次来？试试示例剧本</h2>
+        <div className="lobby-list">
+          {props.myTemplates.filter((template) => template.tags?.includes("starter"))
+            .map((template) => <article className="row-card row-inline" key={template.id}>
+              <div className="row-main">
+                <strong>✊ {template.name}</strong>
+                <span className="muted">{template.role_count} 人 · 快速体验</span>
+              </div>
+              <button onClick={() => openCreate(starterPreset(template))}>
+                开始游戏
+              </button>
+            </article>)}
+        </div>
+      </section>}
 
     {props.error && <p className="error-banner">{props.error}</p>}
     {props.notice && <p className="notice-banner">{props.notice}</p>}
@@ -274,5 +305,6 @@ export function PlatformHome(props: Props) {
           source: "template", id: template.id, name: template.name,
         }); }} />
     </OverlayPanel>}
+    <ProjectFooter />
   </main>;
 }

@@ -86,10 +86,13 @@ class AuthHttpTests(unittest.TestCase):
         self.accounts.initialize()
 
     def make_app(self, allow_registration: bool = True):
+        from server.platform.room_manager import RoomManager
+        root = Path(self.directory.name)
         return create_platform_app(
             self.accounts,
-            Path(self.directory.name) / "static",
+            root / "static",
             allow_registration=allow_registration,
+            room_manager=RoomManager(self.accounts, root / "games", root / "templates"),
         )
 
     def register(self, client: TestClient, username: str, password: str = "password123"):

@@ -65,7 +65,7 @@ cp .env.example .env
 python -m server.main
 ```
 
-打开 `http://127.0.0.1:8080/`，注册并登录，然后在大厅使用可用剧本或已有存档创建房间，也可以输入房间码加入。房主在 Web 中分配角色。空平台启动不要求 LLM key，但创建或恢复可游玩的房间时需要有效配置；如使用其他兼容服务，可调整 `.env` 中的 `LLM_BASE_URL` 和 `LLM_MODEL`。
+打开 `http://127.0.0.1:8080/`，注册并登录。新账号自动获得中英文石头剪刀布入门剧本；可在大厅的 starter 区域选择剧本建房，再复制邀请链接给朋友。打开链接后会沿用加入房间表单，房间密码仍需手动输入。Web 可切换中文和 English，并保存选择。房主在 Web 中分配角色。空平台启动不要求 LLM key，但创建或恢复可游玩的房间时需要有效配置；如使用其他兼容服务，可调整 `.env` 中的 `LLM_BASE_URL` 和 `LLM_MODEL`。
 
 平台不会自动创建管理员。注册账号后，如需本机平台管理，可执行：
 
@@ -76,7 +76,7 @@ python client/admin.py
 
 ## 剧本系统
 
-`templates/default/` 是创建新剧本的空白基础 scaffold：可编辑的故事内容初始为空，简单的世界／角色视角 schema 与通用 AI Prompt 提供底层结构。`templates/default_en/` 是它的英文展示版本。`templates/example1/` 是带完整赛况与状态栏的石头剪刀布中文版案例，`templates/example1_en/` 是英文译本；这三个展示目录不进入可玩剧本列表。剧本由 `metadata.json`（`count`、`names`、`title`、`introduction`、`tags`）、世界文字与状态示例、编号的 `characters/1..N/` 角色目录及 AI Prompt 组成；角色状态栏可选。`*_schema.json` 是给 LLM 的字段示例和说明，不是标准 JSON Schema。
+`templates/default/` 是创建新剧本的空白基础 scaffold：可编辑的故事内容初始为空，简单的世界／角色视角 schema 与通用 AI Prompt 提供底层结构。`templates/default_en/` 是它的英文展示版本。`templates/example1/` 和 `templates/example1_en/` 是中英文石头剪刀布入门剧本；注册后会复制到每个用户自己的剧本目录，可以像普通剧本一样建房、编辑、复制或删除。已有用户可运行 `python -m server.main --seed-starter-templates` 幂等补齐。剧本由 `metadata.json`（`count`、`names`、`title`、`introduction`、`tags`）、世界文字与状态示例、编号的 `characters/1..N/` 角色目录及 AI Prompt 组成；角色状态栏可选。`*_schema.json` 是给 LLM 的字段示例和说明，不是标准 JSON Schema。
 
 基础 Web 编辑器负责标题、简介、标签、世界设定、角色人设、开场白和 AI 写作要求，保存时保留高级 Schema 与 Prompt。需要调整高级文件时，可下载剧本 ZIP，在本地修改后将合法 ZIP 导入为自己的新剧本，或替换已有剧本。更早的 `players/`、`statusbar/` 目录布局不会自动转换，详见 [Platform 文档](server/platform/README.md)。
 
@@ -89,7 +89,7 @@ python client/admin.py
 | `web/` | React + TypeScript 客户端；`dist/` 为已提交的生产构建 |
 | `client/admin.py` | 仅供本机使用的平台 Admin 控制台 |
 | `templates/default/` | 仓库保留的默认剧本 scaffold |
-| `templates/default_en/`、`templates/example1/`、`templates/example1_en/` | 不进入可玩目录的英文基础模板和中英文剧本案例 |
+| `templates/default_en/`、`templates/example1/`、`templates/example1_en/` | 英文基础模板展示与中英文可玩入门剧本源目录 |
 | `tests/` | Python 测试及人工合成 fixture |
 
 `data/`、`games/` 和上述四个仓库目录之外的 `templates/` 是本机运行数据或用户内容，不提交到 Git。

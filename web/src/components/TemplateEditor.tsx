@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPut } from "../api";
 import type { TemplateEditorData } from "../types";
 import { downloadAdvancedTemplateZip, downloadTemplateZip, uploadTemplateZip } from "../templateZip";
+import { uiConfirm } from "../i18n";
 
 type Props = {
   templateId: string;
@@ -76,14 +77,14 @@ export function TemplateEditor({ templateId, roleCounts, onBack, onSaved }: Prop
       item.index === index ? { ...item, [field]: value } : item) });
   };
   const back = () => {
-    if (!dirty || window.confirm("有未保存的修改，确定离开吗？")) onBack();
+    if (!dirty || uiConfirm("有未保存的修改，确定离开吗？")) onBack();
   };
   const importZip = async (file: File) => {
     if (working) return;
     const prompt = dirty
       ? "导入 ZIP 将覆盖当前剧本，未保存的修改会丢失。确定继续吗？"
       : "导入 ZIP 会覆盖当前剧本的全部内容。确定继续吗？";
-    if (!window.confirm(prompt)) return;
+    if (!uiConfirm(prompt)) return;
     setZipBusy(true);
     setError(""); setNotice("");
     const result = await uploadTemplateZip(file, templateId);
@@ -99,7 +100,7 @@ export function TemplateEditor({ templateId, roleCounts, onBack, onSaved }: Prop
   };
   const downloadZip = async () => {
     if (working) return;
-    if (dirty && !window.confirm("ZIP 只包含已保存的内容。继续下载吗？")) return;
+    if (dirty && !uiConfirm("ZIP 只包含已保存的内容。继续下载吗？")) return;
     setZipBusy(true);
     setError("");
     const failure = await downloadTemplateZip(templateId);

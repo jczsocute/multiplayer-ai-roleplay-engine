@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { registrationError } from "../auth";
 import { MAX_USERNAME_LENGTH, MIN_PASSWORD_LENGTH } from "../protocol";
+import { ProjectFooter, translateUi, useLanguage } from "../i18n";
 
 type Props = {
   allowRegistration: boolean;
@@ -8,6 +9,7 @@ type Props = {
 };
 
 export function AuthScreen({ allowRegistration, onSubmit }: Props) {
+  const { language } = useLanguage();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -33,7 +35,7 @@ export function AuthScreen({ allowRegistration, onSubmit }: Props) {
         return;
       }
     } else if (!name || !password) {
-      setError("请填写用户名和密码");
+      setError(translateUi("请填写用户名和密码", language));
       return;
     }
     setBusy(true);
@@ -77,5 +79,6 @@ export function AuthScreen({ allowRegistration, onSubmit }: Props) {
       {!allowRegistration && <p className="muted">注册当前已关闭，请使用已有账号登录。</p>}
       {error && <p className="error-text">{error}</p>}
     </form>
+    <ProjectFooter />
   </main>;
 }

@@ -65,7 +65,7 @@ cp .env.example .env
 python -m server.main
 ```
 
-Open `http://127.0.0.1:8080/`, register and log in, then create a Room from an available Template or an existing Game Save. The host assigns roles in the Web interface. The platform can start without an LLM key, but creating or recovering a playable Room requires valid LLM configuration. Set `LLM_BASE_URL` and `LLM_MODEL` in `.env` to use another compatible provider.
+Open `http://127.0.0.1:8080/`, register and log in. Every new account gets editable Chinese and English Rock, Paper, Scissors starter scripts. Choose one in the Lobby's starter area, create a Room, and copy the invite link for friends. The host assigns roles in the Web interface. The platform can start without an LLM key, but creating or recovering a playable Room requires valid LLM configuration. Set `LLM_BASE_URL` and `LLM_MODEL` in `.env` to use another compatible provider. Existing accounts can receive the starter scripts once with `python -m server.main --seed-starter-templates`.
 
 The platform does not create an administrator automatically. After registering an account, grant it local administration access if needed:
 
@@ -76,7 +76,7 @@ python client/admin.py
 
 ## Template System
 
-`templates/default/` is the blank scaffold used to create new scripts. Its editable story fields start empty; simple world and character-view schemas and general AI prompts provide the underlying structure. `templates/default_en/` is its English showcase translation. `templates/example1/` contains a complete Chinese rock, paper, scissors scenario with match state and status bars, while `templates/example1_en/` is its English translation. The three showcases are not listed as playable Templates. A Template has `metadata.json` (`count`, `names`, `title`, `introduction`, `tags`), world text and state examples, numbered `characters/1..N/` directories, and AI prompts. Character status is optional. The `*_schema.json` files are field examples for the LLM, not standard JSON Schema.
+`templates/default/` is the blank scaffold used to create new scripts. Its editable story fields start empty; simple world and character-view schemas and general AI prompts provide the underlying structure. `templates/default_en/` is its English showcase translation. `templates/example1/` and `templates/example1_en/` are playable Chinese and English Rock, Paper, Scissors starters copied into each new user's private Template catalog. The copies can be edited, copied or deleted like any Template. A Template has `metadata.json` (`count`, `names`, `title`, `introduction`, `tags`), world text and state examples, numbered `characters/1..N/` directories, and AI prompts. Character status is optional. The `*_schema.json` files are field examples for the LLM, not standard JSON Schema.
 
 The basic Web editor changes the title, introduction, tags, world text, character sheets, openings, and AI writing guidelines. It preserves advanced schemas and prompts. Download a Template ZIP to edit those files locally, then import the validated ZIP to create or replace your own Template. Older `players/` or `statusbar/` layouts are not automatically converted; see the [Platform guide](server/platform/README.md).
 
@@ -89,7 +89,7 @@ The basic Web editor changes the title, introduction, tags, world text, characte
 | `web/` | React and TypeScript client; `dist/` is the committed production build |
 | `client/admin.py` | Loopback-only platform Admin console |
 | `templates/default/` | Committed Template scaffold |
-| `templates/default_en/`, `templates/example1/`, `templates/example1_en/` | English scaffold and Chinese/English scenario showcases; not playable catalog entries |
+| `templates/default_en/`, `templates/example1/`, `templates/example1_en/` | English scaffold and bundled Chinese/English playable starter sources |
 | `tests/` | Python tests and synthetic fixtures |
 
 `data/`, `games/`, and Templates other than the four bundled directories contain local runtime or user data and are ignored by Git.

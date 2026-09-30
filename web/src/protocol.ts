@@ -79,6 +79,8 @@ export type RoomMessage = {
   role: Role | null;
   character_name: string | null;
   text: string;
+  message_key?: string;
+  params?: Record<string, string | number>;
 };
 export type StateMessage = { type: "state"; round: number; stage: ProcessingStage; players: Record<Role, PlayerState> };
 export type ProcessingStageMessage = { type: "processing_stage"; round: number; stage: ProcessingStage };
