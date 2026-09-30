@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_TEMPLATE_ZIP_BYTES, uploadTemplateZip } from "./templateZip";
+import { downloadAdvancedTemplateZip, MAX_TEMPLATE_ZIP_BYTES, uploadTemplateZip } from "./templateZip";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -25,5 +25,14 @@ describe("Template ZIP upload", () => {
     const result = await uploadTemplateZip(file);
     expect(result.ok).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("downloads the fixed advanced example endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: "unauthenticated" }), { status: 401 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await downloadAdvancedTemplateZip()).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/templates/advanced-example.zip");
   });
 });

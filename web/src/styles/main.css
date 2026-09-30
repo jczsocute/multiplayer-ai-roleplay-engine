@@ -127,6 +127,7 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .panel-form input[type="radio"] { width: auto; }
 .template-create-form select { width: 5rem; max-width: 100%; }
 .panel-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+.advanced-template-download { align-items: center; }
 /* Resource panels scroll inside a fixed maximum height. */
 .overlay-body { max-height: min(62dvh, 34rem); overflow-y: auto; }
 .announcement-markdown { line-height: 1.6; overflow-wrap: anywhere; }

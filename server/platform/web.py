@@ -31,13 +31,14 @@ from server.platform.models import AuthenticatedUser
 from server.platform.room_manager import RoomManager
 from server.platform.template_editor import read_template_editor, save_template_editor
 from server.platform.template_zip import (
-    MAX_ZIP_BYTES, export_template_zip, import_template_zip,
+    MAX_ZIP_BYTES, export_template_payload_zip, export_template_zip, import_template_zip,
 )
 from server.platform.websocket_adapter import DISCONNECTS, WebSocketConnection
 from server.platform.security import is_loopback_host, origin_allowed
 
 logger = logging.getLogger(__name__)
 ANNOUNCEMENT_PATH = Path(__file__).resolve().parents[2] / "announcement.md"
+ADVANCED_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "example1"
 
 
 def create_platform_app(
@@ -270,6 +271,19 @@ def create_platform_app(
             } else "invalid_template_zip"
             return _api_error(code, _not_found(code) or 400)
         return JSONResponse(template_rows(user.id, [record])[0], status_code=201 if template_id is None else 200)
+
+    async def advanced_template_zip(request: Request) -> Response:
+        if await resolve_user(request) is None:
+            return _api_error("unauthenticated", 401)
+        try:
+            data = await asyncio.to_thread(export_template_payload_zip, ADVANCED_TEMPLATE_PATH)
+        except (ValueError, OSError):
+            logger.exception("Could not export bundled advanced Template")
+            return _api_error("invalid_template_zip", 500)
+        return Response(data, media_type="application/zip", headers={
+            "Content-Disposition": 'attachment; filename="example1.zip"',
+            "Cache-Control": "no-store",
+        })
 
     async def create_template(request: Request) -> JSONResponse:
         user = await resolve_user(request)
@@ -638,6 +652,7 @@ def create_platform_app(
         Route("/api/announcement", announcement, methods=["GET"]),
         Route("/api/templates/mine", my_templates, methods=["GET"]),
         Route("/api/templates/public", public_templates, methods=["GET"]),
+        Route("/api/templates/advanced-example.zip", advanced_template_zip, methods=["GET"]),
         Route("/api/templates/import-zip", template_zip, methods=["POST"]),
         Route("/api/templates/{template_id}/zip", template_zip, methods=["GET", "PUT"]),
         Route("/api/templates/{template_id}/editor", template_editor, methods=["GET", "PUT"]),

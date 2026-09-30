@@ -121,15 +121,13 @@ describe("user-facing Template wording", () => {
   });
 
   it("uses 剧本 in 我的剧本", () => {
-    expectScriptWording(
-      renderToStaticMarkup(
-        <MyTemplatesPanel templates={[template]} roleCounts={[2, 3, 4]} busy={false}
-          error="" onUse={noop} onDetail={noop} onEdit={noop}
-          onImportZip={noop} onExportZip={noop} onRename={noop} onCopy={noop}
-          onDelete={noop} onCreate={noop} onToggleVisibility={noop} />,
-      ),
-      "新建", "剧本角色数",
+    const html = renderToStaticMarkup(
+      <MyTemplatesPanel templates={[template]} roleCounts={[2, 3, 4]} busy={false}
+        error="" onUse={noop} onDetail={noop} onEdit={noop}
+        onImportZip={noop} onExportZip={noop} onRename={noop} onCopy={noop}
+        onDelete={noop} onCreate={noop} onToggleVisibility={noop} />,
     );
+    expectScriptWording(html, "新建", "下载高级剧本", "剧本角色数");
   });
 
   it("uses 剧本 in the detail view", () => {

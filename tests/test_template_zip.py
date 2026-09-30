@@ -151,3 +151,27 @@ class TemplateZipTests(unittest.TestCase):
             self.assertTrue((self.templates / created.json()["id"] / "metadata.json").is_file())
             self.assertEqual(client.post("/api/templates/import-zip", headers=owner,
                                          content=b"not a zip").status_code, 400)
+
+    def test_advanced_example_download_is_fixed_and_importable(self) -> None:
+        manager = RoomManager(self.database, self.root / "games", self.templates)
+        app = create_platform_app(self.database, room_manager=manager)
+        owner = {"cookie": f"rp_auth={self.database.create_session(self.owner.id, 30)}"}
+        other = {"cookie": f"rp_auth={self.database.create_session(self.other.id, 30)}"}
+        url = "/api/templates/advanced-example.zip"
+        with TestClient(app) as client:
+            self.assertEqual(client.get(url).status_code, 401)
+            response = client.get(url, headers=owner)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "application/zip")
+            self.assertIn("example1.zip", response.headers["content-disposition"])
+            self.assertEqual(client.get(url, headers=other).status_code, 200)
+            with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+                names = set(archive.namelist())
+                self.assertIn("characters/1/character_status_schema.json", names)
+                self.assertIn("characters/2/character_status_initial.json", names)
+                self.assertEqual(json.loads(archive.read("metadata.json"))["title"], "石头剪刀布")
+            imported = client.post("/api/templates/import-zip", headers=owner,
+                                   content=response.content)
+            self.assertEqual(imported.status_code, 201, imported.text)
+            self.assertTrue((self.templates / imported.json()["id"] /
+                             "characters/1/character_status_schema.json").is_file())

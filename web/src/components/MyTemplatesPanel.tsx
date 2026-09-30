@@ -5,6 +5,7 @@ import {
   visibilityToggleLabel,
 } from "../lobby";
 import type { TemplateItem } from "../types";
+import { downloadAdvancedTemplateZip } from "../templateZip";
 
 type Props = {
   templates: TemplateItem[];
@@ -34,6 +35,8 @@ export function MyTemplatesPanel({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [roleCount, setRoleCount] = useState(roleCounts[0] ?? 2);
+  const [advancedBusy, setAdvancedBusy] = useState(false);
+  const [advancedError, setAdvancedError] = useState("");
   const sorted = useMemo(() => sortedByUpdated(templates), [templates]);
 
   const rename = (template: TemplateItem) => {
@@ -50,6 +53,14 @@ export function MyTemplatesPanel({
       </button>
       <button className="secondary compact-button" disabled={busy}
         onClick={() => uploadInput.current?.click()}>上传zip新建</button>
+      <button className="secondary compact-button" disabled={busy || advancedBusy}
+        onClick={() => {
+          setAdvancedBusy(true);
+          setAdvancedError("");
+          void downloadAdvancedTemplateZip().then((failure) => {
+            if (failure) setAdvancedError(failure);
+          }).finally(() => setAdvancedBusy(false));
+        }}>下载高级剧本</button>
       <input ref={uploadInput} type="file" accept=".zip,application/zip" hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -80,6 +91,7 @@ export function MyTemplatesPanel({
     </form>}
 
     {error && <p className="error-text">{error}</p>}
+    {advancedError && <p className="error-text" role="alert">{advancedError}</p>}
     {!sorted.length && <p className="muted">还没有自己的剧本。</p>}
 
     {sorted.map((template) => <article className="row-card" key={template.id}>

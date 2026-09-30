@@ -181,6 +181,8 @@ GET    /api/rooms/<code>/history.zip 房主下载当前 Room 存档历史 ZIP
   现有 World/Character schema、initial 和高级 prompt 原样保留。保存先复制到临时目录并
   校验，再替换原目录；catalog 改名失败时恢复原目录与 catalog 标题。只有 owner 可读写编辑接口。
 - ZIP 包含当前 Template payload，文件位于 ZIP 根目录（也接受单层外目录）。
+  “下载高级剧本”固定导出仓库中的 `templates/example1/`，其中包含角色状态栏示例；
+  已登录用户可通过 `GET /api/templates/advanced-example.zip` 下载，再导入为自己的剧本。
   上传限制 8 MiB，解压后限制 20 MiB、单文件 2 MiB、最多 64 项；拒绝越界路径、
   链接、重复或非标准布局的文件。导入在临时目录解压并运行同一 Template 校验；
   替换失败恢复原 payload 与 catalog 名称。新建导入默认私有，已有 Game 快照不受影响。

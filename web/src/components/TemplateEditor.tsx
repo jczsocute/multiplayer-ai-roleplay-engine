@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPut } from "../api";
 import type { TemplateEditorData } from "../types";
-import { downloadTemplateZip, uploadTemplateZip } from "../templateZip";
+import { downloadAdvancedTemplateZip, downloadTemplateZip, uploadTemplateZip } from "../templateZip";
 
 type Props = {
   templateId: string;
@@ -106,6 +106,14 @@ export function TemplateEditor({ templateId, roleCounts, onBack, onSaved }: Prop
     if (failure) setError(failure);
     setZipBusy(false);
   };
+  const downloadAdvancedZip = async () => {
+    if (working) return;
+    setZipBusy(true);
+    setError("");
+    const failure = await downloadAdvancedTemplateZip();
+    if (failure) setError(failure);
+    setZipBusy(false);
+  };
   const save = async () => {
     if (!draft || working) return;
     setSaving(true);
@@ -177,9 +185,14 @@ export function TemplateEditor({ templateId, roleCounts, onBack, onSaved }: Prop
           <li>暂时不支持角色状态栏在线编辑。</li>
           <li>如需编辑角色状态栏或更多 prompt，请下载 zip 项目，编辑完成后导入。</li>
         </ul>
+        <div className="panel-actions advanced-template-download">
+          <span className="muted">您可以在这里下载高级剧本。</span>
+          <button type="button" className="secondary compact-button"
+            onClick={() => void downloadAdvancedZip()}>下载高级剧本</button>
+        </div>
         <div className="panel-actions">
-          <button type="button" className="secondary" onClick={() => void downloadZip()}>下载zip</button>
-          <button type="button" className="secondary" onClick={() => uploadInput.current?.click()}>导入zip</button>
+          <button type="button" className="secondary compact-button" onClick={() => void downloadZip()}>导出zip</button>
+          <button type="button" className="secondary compact-button" onClick={() => uploadInput.current?.click()}>导入zip</button>
           <input ref={uploadInput} type="file" accept=".zip,application/zip" hidden
             onChange={(event) => {
               const file = event.target.files?.[0];

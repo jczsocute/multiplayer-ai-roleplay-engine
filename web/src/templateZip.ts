@@ -24,9 +24,9 @@ export async function uploadTemplateZip(file: File, templateId?: string): Promis
   }
 }
 
-export async function downloadTemplateZip(templateId: string): Promise<string | null> {
+async function downloadZip(urlPath: string, filename: string): Promise<string | null> {
   try {
-    const response = await fetch(`/api/templates/${encodeURIComponent(templateId)}/zip`);
+    const response = await fetch(urlPath);
     if (!response.ok) {
       const data = await response.json() as { error?: string; detail?: string };
       return humanizeError(data.error, data.detail);
@@ -34,7 +34,7 @@ export async function downloadTemplateZip(templateId: string): Promise<string | 
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${templateId}.zip`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -43,4 +43,12 @@ export async function downloadTemplateZip(templateId: string): Promise<string | 
   } catch {
     return "下载剧本失败，请稍后重试";
   }
+}
+
+export function downloadTemplateZip(templateId: string): Promise<string | null> {
+  return downloadZip(`/api/templates/${encodeURIComponent(templateId)}/zip`, `${templateId}.zip`);
+}
+
+export function downloadAdvancedTemplateZip(): Promise<string | null> {
+  return downloadZip("/api/templates/advanced-example.zip", "example1.zip");
 }

@@ -98,6 +98,11 @@ def export_template_zip(
 ) -> bytes:
     require_owned_template(database, template_id, owner_user_id)
     root = Path(templates_dir) / template_id
+    return export_template_payload_zip(root)
+
+
+def export_template_payload_zip(root: Path) -> bytes:
+    """Package a validated payload, including bundled showcase files."""
     validate_template(root)
     output = io.BytesIO()
     entries = list(root.rglob("*"))
