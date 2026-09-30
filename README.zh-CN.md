@@ -76,7 +76,7 @@ python client/admin.py
 
 ## 剧本系统
 
-`templates/default/` 是创建新剧本的基础 scaffold。剧本由 `metadata.json`（`count`、`names`、`title`、`introduction`、`tags`）、世界文字与状态示例、编号的 `characters/1..N/` 角色目录及 AI Prompt 组成；角色状态栏可选。`*_schema.json` 是给 LLM 的字段示例和说明，不是标准 JSON Schema。
+`templates/default/` 是创建新剧本的基础 scaffold，使用石头剪刀布的示例文字和简单的世界／角色视角 schema。`templates/example1/` 是带完整赛况与状态栏的中文版展示案例，`templates/example1_en/` 是英文译本；两者不进入可玩剧本列表。剧本由 `metadata.json`（`count`、`names`、`title`、`introduction`、`tags`）、世界文字与状态示例、编号的 `characters/1..N/` 角色目录及 AI Prompt 组成；角色状态栏可选。`*_schema.json` 是给 LLM 的字段示例和说明，不是标准 JSON Schema。
 
 基础 Web 编辑器负责标题、简介、标签、世界设定、角色人设、开场白和 AI 写作要求，保存时保留高级 Schema 与 Prompt。需要调整高级文件时，可下载剧本 ZIP，在本地修改后将合法 ZIP 导入为自己的新剧本，或替换已有剧本。更早的 `players/`、`statusbar/` 目录布局不会自动转换，详见 [Platform 文档](server/platform/README.md)。
 
@@ -89,9 +89,10 @@ python client/admin.py
 | `web/` | React + TypeScript 客户端；`dist/` 为已提交的生产构建 |
 | `client/admin.py` | 仅供本机使用的平台 Admin 控制台 |
 | `templates/default/` | 仓库保留的默认剧本 scaffold |
+| `templates/example1/`、`templates/example1_en/` | 不进入可玩目录的中英文展示案例 |
 | `tests/` | Python 测试及人工合成 fixture |
 
-`data/`、`games/` 和非默认 `templates/` 是本机运行数据或用户内容，不提交到 Git。
+`data/`、`games/` 和上述三个仓库目录之外的 `templates/` 是本机运行数据或用户内容，不提交到 Git。
 
 ## 开发
 

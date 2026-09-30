@@ -116,12 +116,31 @@ class FakeWebSocket:
 
 
 class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
+    def _loader_with_status(self) -> PromptLoader:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name) / "story"
+        shutil.copytree("templates/default", root)
+        for index in (1, 2):
+            character = root / "characters" / str(index)
+            (character / "character_status_schema.json").write_text(
+                json.dumps({"hp": "<current health>"}), encoding="utf-8"
+            )
+            (character / "character_status_initial.json").write_text(
+                json.dumps({"hp": "healthy"}), encoding="utf-8"
+            )
+        return PromptLoader(str(root))
+
     async def test_optional_character_status_skips_disabled_role(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "story"
             shutil.copytree("templates/default", root)
-            (root / "characters/2/character_status_schema.json").unlink()
-            (root / "characters/2/character_status_initial.json").unlink()
+            (root / "characters/1/character_status_schema.json").write_text(
+                json.dumps({"hp": "<current health>"}), encoding="utf-8"
+            )
+            (root / "characters/1/character_status_initial.json").write_text(
+                json.dumps({"hp": "healthy"}), encoding="utf-8"
+            )
             loader = PromptLoader(str(root))
             p1_status = {key: "updated" for key in loader.character_status_schema("P1")}
             output = {
@@ -164,12 +183,13 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
 
     async def test_world_updater_rejects_incomplete_or_unknown_role_outputs(self) -> None:
+        loader = self._loader_with_status()
         valid = {
             "world_state": {"world_information": "updated"},
             "character_views": {"P1": {"world_information": "gate"},
                                 "P2": {"world_information": "road"}},
             "character_status": {
-                role: {key: "updated" for key in WorldUpdater(JsonLLM({})).loader.character_status_schema(role)}
+                role: {key: "updated" for key in loader.character_status_schema(role)}
                 for role in ("P1", "P2")
             },
         }
@@ -184,14 +204,14 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         output[field]["P1"] = []
                     with self.assertRaises(ValueError):
-                        await WorldUpdater(JsonLLM(output)).update("{}", {"P1": "a", "P2": "b"})
+                        await WorldUpdater(JsonLLM(output), loader).update("{}", {"P1": "a", "P2": "b"})
 
         for field in ("world_state", "character_views", "character_status"):
             with self.subTest(field=field, problem="top-level type"):
                 output = copy.deepcopy(valid)
                 output[field] = []
                 with self.assertRaises(ValueError):
-                    await WorldUpdater(JsonLLM(output)).update("{}", {"P1": "a", "P2": "b"})
+                    await WorldUpdater(JsonLLM(output), loader).update("{}", {"P1": "a", "P2": "b"})
 
     async def test_narrator_uses_visible_inputs_and_returns_structure(self) -> None:
         llm = MockLLM("You see the open gate.")
@@ -214,17 +234,18 @@ class WorldUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("# 角色当前状态", llm.user_prompt)
 
     async def test_world_updater_builds_prompt_without_real_api(self) -> None:
+        loader = self._loader_with_status()
         expected = {
             "world_state": {"world_information": "updated"},
             "character_views": {"P1": {"world_information": "gate"},
                                 "P2": {"world_information": "road"}},
             "character_status": {
-                role: {key: "updated" for key in WorldUpdater(JsonLLM({})).loader.character_status_schema(role)}
+                role: {key: "updated" for key in loader.character_status_schema(role)}
                 for role in ("P1", "P2")
             },
         }
         llm = JsonLLM(expected)
-        updater = WorldUpdater(llm)
+        updater = WorldUpdater(llm, loader)
 
         result = await updater.update(
             "old state", {"P1": "action P1", "P2": "action P2"}

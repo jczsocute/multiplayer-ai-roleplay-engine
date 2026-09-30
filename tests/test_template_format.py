@@ -42,6 +42,9 @@ class TemplateFormatTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "JSON root must be an object"):
             validate_template(self.root)
         schema.write_text('{"seen": "<what is seen>"}', encoding="utf-8")
+        (self.root / "characters/1/character_status_schema.json").write_text(
+            '{"mood": "<current mood>"}', encoding="utf-8"
+        )
         status = self.root / "characters/1/character_status_initial.json"
         status.write_text(json.dumps({"extra": "value"}), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "does not match schema keys"):
@@ -50,6 +53,8 @@ class TemplateFormatTests(unittest.TestCase):
     def test_status_schema_is_optional_but_requires_matching_initial(self) -> None:
         schema = self.root / "characters/2/character_status_schema.json"
         initial = self.root / "characters/2/character_status_initial.json"
+        schema.write_text('{"mood": "<current mood>"}', encoding="utf-8")
+        initial.write_text('{"mood": "ready"}', encoding="utf-8")
         initial.unlink()
         with self.assertRaisesRegex(ValueError, "invalid JSON file"):
             validate_template(self.root)

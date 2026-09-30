@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { markAnnouncementSeen } from "../announcement";
+import { apiGet } from "../api";
 import {
   LOBBY_TITLE, MAX_LOBBY_ROWS, mayManageRoom, pickRandom, roomIsFull,
   roomLabel, roomOccupancy, templateMeta, templateOwnerLabel,
@@ -11,7 +14,7 @@ import { MyTemplatesPanel } from "./MyTemplatesPanel";
 import { OverlayPanel } from "./OverlayPanel";
 import { TemplateDetailPanel } from "./TemplateDetailPanel";
 
-type Panel = "none" | "create" | "join" | "templates" | "games";
+type Panel = "none" | "create" | "join" | "templates" | "games" | "announcement";
 
 type Props = {
   userId: number;
@@ -56,10 +59,36 @@ export function PlatformHome(props: Props) {
   const [preset, setPreset] = useState<CreateRoomPreset | null>(null);
   const [detail, setDetail] = useState<TemplateItem | null>(null);
   const [joinCode, setJoinCode] = useState("");
+  const [announcementContent, setAnnouncementContent] = useState<string | null>(null);
+  const [announcementLoading, setAnnouncementLoading] = useState(false);
+  const [announcementError, setAnnouncementError] = useState("");
   // Bumping a nonce re-picks the sample; the pool itself comes from props, so a
   // refresh that changes the list also re-picks automatically.
   const [roomPick, setRoomPick] = useState(0);
   const [templatePick, setTemplatePick] = useState(0);
+
+  useEffect(() => {
+    try {
+      if (!markAnnouncementSeen(props.userId, localStorage)) return;
+    } catch {
+      // Private browsing may disallow storage; still show once for this Lobby mount.
+    }
+    setPanel("announcement");
+  }, [props.userId]);
+
+  useEffect(() => {
+    if (panel !== "announcement" || announcementContent !== null) return;
+    let current = true;
+    setAnnouncementLoading(true);
+    setAnnouncementError("");
+    void apiGet<{ content: string }>("/api/announcement").then((result) => {
+      if (!current) return;
+      if (result.ok) setAnnouncementContent(result.data.content);
+      else setAnnouncementError("公告加载失败，请稍后重试。");
+      setAnnouncementLoading(false);
+    });
+    return () => { current = false; };
+  }, [panel, announcementContent]);
 
   const rooms = useMemo(
     () => pickRandom(props.rooms, MAX_LOBBY_ROWS),
@@ -115,7 +144,10 @@ export function PlatformHome(props: Props) {
         <h1>{LOBBY_TITLE}</h1>
         <p className="muted">欢迎，{props.username}</p>
       </div>
-      <button className="danger header-button" onClick={props.onLogout}>退出登录</button>
+      <div className="lobby-header-actions">
+        <button className="secondary header-button" onClick={() => setPanel("announcement")}>公告</button>
+        <button className="danger header-button" onClick={props.onLogout}>退出登录</button>
+      </div>
     </header>
 
     <nav className="lobby-quick">
@@ -187,6 +219,15 @@ export function PlatformHome(props: Props) {
         </button>)}
       </div>
     </section>
+
+    {panel === "announcement" && <OverlayPanel title="公告" onClose={close}>
+      {announcementLoading && <p className="muted">正在加载公告…</p>}
+      {announcementError && <p className="error-text">{announcementError}</p>}
+      {!announcementLoading && !announcementError &&
+        (announcementContent
+          ? <div className="announcement-markdown"><ReactMarkdown>{announcementContent}</ReactMarkdown></div>
+          : <p className="muted">暂无公告。</p>)}
+    </OverlayPanel>}
 
     {panel === "create" && <OverlayPanel title="创建房间" onClose={close}>
       <CreateRoomForm games={props.games} templates={props.templates} preset={preset}

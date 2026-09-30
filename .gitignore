@@ -7,6 +7,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+/announcement.md
 
 # Database
 *.db
@@ -29,6 +30,10 @@ database/*.db
 /templates/*
 !/templates/default/
 !/templates/default/**
+!/templates/example1/
+!/templates/example1/**
+!/templates/example1_en/
+!/templates/example1_en/**
 
 # Logs
 logs/*

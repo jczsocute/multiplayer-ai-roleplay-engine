@@ -1,4 +1,6 @@
--r requirements-client.txt
+textual
+rich
+websockets
 python-dotenv
 openai
 starlette

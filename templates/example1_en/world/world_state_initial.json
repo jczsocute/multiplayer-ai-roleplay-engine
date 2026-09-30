@@ -1,0 +1,32 @@
+{
+  "match": {
+    "rules": "First to five wins; draws and invalid rounds add no wins.",
+    "rounds_played": 0,
+    "passerby_a_wins": 0,
+    "passerby_b_wins": 0,
+    "draws": 0,
+    "invalid_rounds": 0,
+    "finished": false,
+    "winner": ""
+  },
+  "latest_round": {
+    "number": 0,
+    "passerby_a_throw": "invalid",
+    "passerby_b_throw": "invalid",
+    "result": "invalid round",
+    "public_score": "Passerby A 0 : 0 Passerby B",
+    "public_behavior": "The match has not started; both passersby stare each other down with entirely unnecessary intensity."
+  },
+  "character_state": {
+    "Passerby A": {
+      "mood": "😐 Ready",
+      "win_streak": 0,
+      "loss_streak": 0
+    },
+    "Passerby B": {
+      "mood": "😐 Ready",
+      "win_streak": 0,
+      "loss_streak": 0
+    }
+  }
+}

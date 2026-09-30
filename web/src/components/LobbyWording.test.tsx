@@ -47,6 +47,13 @@ function expectScriptWording(html: string, ...expected: string[]) {
 }
 
 describe("user-facing Template wording", () => {
+  it("places a normal announcement button beside the danger logout button", () => {
+    const html = home();
+    expect(html).toContain('class="lobby-header-actions"');
+    expect(html).toMatch(/class="secondary header-button"[^>]*>公告<\/button>/);
+    expect(html).toMatch(/class="danger header-button"[^>]*>退出登录<\/button>/);
+  });
+
   it("offers a return and leave action for a retained full-room membership", () => {
     const room: RoomItem = {
       code: "AB12", game_id: "game_A", game_name: "Save",

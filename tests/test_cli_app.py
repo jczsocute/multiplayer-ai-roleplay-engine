@@ -80,6 +80,19 @@ class ScenarioManagerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manager.create_scenario("../escape", 2)
 
+    def test_showcase_examples_are_hidden_and_not_playable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("default", "example1", "example1_en"):
+                shutil.copytree(Path("templates") / name, root / "templates" / name)
+            manager = ScenarioManager(root / "templates", root / "games")
+            self.assertEqual(manager.list_scenarios(), [])
+            for name in ("example1", "example1_en"):
+                with self.assertRaisesRegex(ValueError, "not a playable"):
+                    manager.create_game(name, "game")
+                with self.assertRaisesRegex(ValueError, "protected"):
+                    manager.delete_scenario(name)
+
 
 class RoleAssignmentTests(unittest.IsolatedAsyncioTestCase):
     async def test_players_are_spectators_until_the_owner_assigns_roles(self) -> None:

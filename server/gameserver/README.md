@@ -71,6 +71,9 @@ prompts/narration.md
 `*_schema.json` 是给 LLM 的字段示例与说明，不是标准 JSON Schema；初始 JSON 的对象键结构必须与对应 schema 一致。`server/gameserver/template.py` 集中校验目录、必需文件与 JSON。
 
 Game payload 是 Template 的完整文件快照，保存在 `games/game_*/`。单局运行时只读取 Game 自己的文件，不回读来源 Template。
+仓库中的 `templates/default/` 使用通用 schema 和石头剪刀布示例内容创建新剧本；
+`templates/example1/` 与 `templates/example1_en/` 展示完整双人剧本及其英文译本，
+均不作为可直接启动的场景目录。
 
 ## 回合与 AI pipeline
 

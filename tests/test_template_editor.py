@@ -42,6 +42,12 @@ class TemplateEditorTests(unittest.TestCase):
         )
 
     def test_text_save_preserves_advanced_files_and_updates_catalog(self) -> None:
+        (self.payload / "characters/1/character_status_schema.json").write_text(
+            '{"mood": "<current mood>"}', encoding="utf-8"
+        )
+        (self.payload / "characters/1/character_status_initial.json").write_text(
+            '{"mood": "ready"}', encoding="utf-8"
+        )
         advanced = (
             "world/world_state_schema.json", "world/world_state_initial.json",
             "characters/1/character_view_schema.json",

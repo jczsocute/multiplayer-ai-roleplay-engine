@@ -84,6 +84,12 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .lobby-shell { max-width: 1050px; margin: 0 auto; padding: 1rem; display: grid; gap: .9rem; }
 .lobby-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .lobby-header p { margin: .25rem 0 0; color: var(--text-muted); }
+.lobby-header-actions { display: flex; align-items: center; gap: .4rem; flex: none; }
+.lobby-header-actions button { white-space: nowrap; }
+@media (max-width: 400px) {
+  .lobby-header { flex-wrap: wrap; }
+  .lobby-header-actions { margin-left: auto; }
+}
 /* Lobby = discovery: four compact entries, horizontally scrollable on phones.
    All four share one look: the accent fill, no per-button overrides. */
 .lobby-quick { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .1rem; }
@@ -123,6 +129,18 @@ h2 { margin-bottom: .35rem; font-size: .95rem; }
 .panel-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
 /* Resource panels scroll inside a fixed maximum height. */
 .overlay-body { max-height: min(62dvh, 34rem); overflow-y: auto; }
+.announcement-markdown { line-height: 1.6; overflow-wrap: anywhere; }
+.announcement-markdown > :last-child { margin-bottom: 0; }
+.announcement-markdown h1, .announcement-markdown h2, .announcement-markdown h3 { margin: 1rem 0 .4rem; }
+.announcement-markdown h1 { font-size: 1.25rem; }
+.announcement-markdown h2 { font-size: 1.1rem; }
+.announcement-markdown p, .announcement-markdown ul, .announcement-markdown ol { margin: .5rem 0; }
+.announcement-markdown ul, .announcement-markdown ol { padding-left: 1.5rem; }
+.announcement-markdown a { color: #ac9ff0; text-decoration: underline; }
+.announcement-markdown code, .announcement-markdown pre { background: var(--surface-2); border-radius: 4px; }
+.announcement-markdown code { padding: .1rem .25rem; }
+.announcement-markdown pre { padding: .6rem; overflow-x: auto; }
+.announcement-markdown pre code { padding: 0; }
 .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 1rem;
   background: rgba(9, 7, 16, .62); }
 .overlay-panel { width: min(100%, 34rem); max-height: min(88dvh, 44rem); display: flex; flex-direction: column;

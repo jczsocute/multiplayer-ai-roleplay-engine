@@ -1,0 +1,32 @@
+{
+  "match": {
+    "rules": "Always state that the first player to reach five wins wins; draws and invalid rounds add no wins.",
+    "rounds_played": "Integer; number of resolved rounds, including wins, draws, and invalid rounds.",
+    "passerby_a_wins": "Integer; Passerby A's wins, increased only for a valid winning round.",
+    "passerby_b_wins": "Integer; Passerby B's wins, increased only for a valid winning round.",
+    "draws": "Integer; increase by one when both valid throws match.",
+    "invalid_rounds": "Integer; increase by one when at least one final throw cannot be determined.",
+    "finished": "Boolean; true once either player reaches five wins.",
+    "winner": "Empty string until the match ends; then only Passerby A or Passerby B."
+  },
+  "latest_round": {
+    "number": "The just-resolved round number; zero before the match begins.",
+    "passerby_a_throw": "Only rock, paper, scissors, or invalid; independently extract Passerby A's final explicit choice.",
+    "passerby_b_throw": "Only rock, paper, scissors, or invalid; independently extract Passerby B's final explicit choice.",
+    "result": "Passerby A wins, Passerby B wins, draw, or invalid round; strictly apply the standard rules.",
+    "public_score": "A short score such as Passerby A 3 : 2 Passerby B.",
+    "public_behavior": "One short sentence about visible behavior or clearly spoken words; no invented events or private thoughts."
+  },
+  "character_state": {
+    "Passerby A": {
+      "mood": "A very short, entertaining mood based on the score and recent results; optionally use one emoji. It never affects the rules.",
+      "win_streak": "Integer; consecutive valid wins by Passerby A, reset to zero when A does not win.",
+      "loss_streak": "Integer; consecutive valid losses by Passerby A, reset to zero when A does not lose."
+    },
+    "Passerby B": {
+      "mood": "A very short, entertaining mood based on the score and recent results; optionally use one emoji. It never affects the rules.",
+      "win_streak": "Integer; consecutive valid wins by Passerby B, reset to zero when B does not win.",
+      "loss_streak": "Integer; consecutive valid losses by Passerby B, reset to zero when B does not lose."
+    }
+  }
+}

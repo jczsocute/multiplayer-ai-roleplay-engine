@@ -1,0 +1,13 @@
+{
+  "this_round": {
+    "own_throw": "Passerby A's actual valid throw this round, or invalid if no final throw was clear.",
+    "opponent_throw": "Passerby B's revealed throw, or invalid if their throw was not valid.",
+    "result": "From this character's perspective: victory, defeat, draw, or invalid round.",
+    "visible_scene": "One short objective sentence about the reveal, visible gestures, or spoken words. Never include Passerby B's unspoken thoughts."
+  },
+  "match_progress": {
+    "score": "Public score in the form Passerby A X : Y Passerby B.",
+    "wins_needed": "How many more wins Passerby A needs to reach five; if finished, state the final winner."
+  },
+  "private_information": "Only Passerby A's own explicitly expressed but unspoken thoughts, guesses, or tactics; write none if absent. Never reveal Passerby B's hidden thoughts."
+}

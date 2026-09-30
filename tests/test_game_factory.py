@@ -204,7 +204,7 @@ class GameFactoryTests(unittest.IsolatedAsyncioTestCase):
         # Template snapshot is owned by the player who created the Room.
         self.assertEqual(runtime.game_server.owner_user_id, bob.id)
         self.assertEqual(
-            runtime.game_server.character_names, {"P1": "林岚", "P2": "周砚"}
+            runtime.game_server.character_names, {"P1": "路人甲", "P2": "路人乙"}
         )
 
     async def test_active_room_recovery_uses_the_default_factory(self) -> None:

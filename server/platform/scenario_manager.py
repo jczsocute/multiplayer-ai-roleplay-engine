@@ -12,6 +12,7 @@ from server.gameserver.template import validate_template
 
 class ScenarioManager:
     BASE_TEMPLATE = "default"
+    RESERVED_TEMPLATES = frozenset({BASE_TEMPLATE, "example1", "example1_en"})
 
     def __init__(
         self,
@@ -32,7 +33,7 @@ class ScenarioManager:
         return sorted(
             path.name
             for path in self.templates_dir.iterdir()
-            if path.is_dir() and path.name != self.BASE_TEMPLATE
+            if path.is_dir() and path.name not in self.RESERVED_TEMPLATES
         )
 
     def list_templates(self) -> list[str]:
@@ -42,8 +43,8 @@ class ScenarioManager:
     def create_scenario(self, scenario_name: str, role_count: int) -> Path:
         self._validate_name(scenario_name)
         validate_role_count(role_count, self.min_role_count, self.max_role_count)
-        if scenario_name == self.BASE_TEMPLATE:
-            raise ValueError("default is the protected base template")
+        if scenario_name in self.RESERVED_TEMPLATES:
+            raise ValueError("bundled templates are protected")
         source = self.templates_dir / self.BASE_TEMPLATE
         target = self.templates_dir / scenario_name
         if not source.is_dir():
@@ -56,8 +57,8 @@ class ScenarioManager:
 
     def delete_scenario(self, scenario_name: str) -> None:
         self._validate_name(scenario_name)
-        if scenario_name == self.BASE_TEMPLATE:
-            raise ValueError("default is the protected base template")
+        if scenario_name in self.RESERVED_TEMPLATES:
+            raise ValueError("bundled templates are protected")
         target = self.templates_dir / scenario_name
         if not target.is_dir():
             raise ValueError(f"unknown scenario: {scenario_name}")
@@ -71,8 +72,8 @@ class ScenarioManager:
     def create_game(self, template_name: str, game_name: str) -> Path:
         self._validate_name(template_name)
         self._validate_name(game_name)
-        if template_name == self.BASE_TEMPLATE:
-            raise ValueError("default is not a playable scenario")
+        if template_name in self.RESERVED_TEMPLATES:
+            raise ValueError("bundled templates are not a playable scenario")
         source = self.templates_dir / template_name
         target = self.games_dir / game_name
         if not source.is_dir():

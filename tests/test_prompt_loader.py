@@ -30,24 +30,21 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
         self.loader = PromptLoader()
 
     def test_scenario_files_load(self) -> None:
-        self.assertIn("世界管理者", self.loader.text("prompts/world_update.md"))
-        self.assertIn("叙事者", self.loader.text("prompts/narration.md"))
+        self.assertIn("世界管理 AI", self.loader.text("prompts/world_update.md"))
+        self.assertIn("叙事 AI", self.loader.text("prompts/narration.md"))
         self.assertIn("AI 创作规范", self.loader.text("prompts/ai_guidelines.md"))
         self.assertIn("世界设定", self.loader.text("world/world.md"))
-        self.assertIn("角色 P1", self.loader.character("P1"))
-        self.assertEqual(self.loader.character_name("P1"), "林岚")
-        self.assertEqual(self.loader.character_name("P2"), "周砚")
-        self.assertIn("暴雨", self.loader.opening("P1"))
-        self.assertIn("机房", self.loader.opening("P2"))
+        self.assertIn("路人甲", self.loader.character("P1"))
+        self.assertEqual(self.loader.character_name("P1"), "路人甲")
+        self.assertEqual(self.loader.character_name("P2"), "路人乙")
+        self.assertIn("石头", self.loader.opening("P1"))
+        self.assertIn("剪刀", self.loader.opening("P2"))
         payload = self.loader.json("metadata.json")
         self.assertEqual(payload["count"], 2)
         self.assertEqual(len(payload["names"]), payload["count"])
         self.assertTrue(payload["introduction"])
-        self.assertIn("生命状态", self.loader.character_status_schema("P1"))
-        self.assertIn("通信设备", self.loader.character_status_schema("P2"))
-        self.assertNotEqual(
-            set(self.loader.character_status_schema("P1")), set(self.loader.character_status_schema("P2"))
-        )
+        self.assertIsNone(self.loader.character_status_schema("P1"))
+        self.assertIsNone(self.loader.character_status_schema("P2"))
         with self.assertRaisesRegex(ValueError, "unknown role"):
             self.loader.character("P99")
         with self.assertRaisesRegex(ValueError, "unknown role"):
@@ -69,12 +66,23 @@ class PromptLoaderTests(unittest.IsolatedAsyncioTestCase):
     def test_initial_state_contains_complete_character_state(self) -> None:
         state = self.loader.json("world/world_state_initial.json")
         self.assertEqual(set(state), {"world_information"})
-        self.assertIn("风暴", state["world_information"])
+        self.assertIn("石头剪刀布", state["world_information"])
         for role in self.loader.role_ids:
-            self.assertEqual(
-                set(self.loader.character_status_initial(role)),
-                set(self.loader.character_status_schema(role)),
-            )
+            self.assertIsNone(self.loader.character_status_initial(role))
+
+    def test_showcase_examples_load_with_optional_status(self) -> None:
+        for directory, names in (
+            ("templates/example1", ("路人甲", "路人乙")),
+            ("templates/example1_en", ("Passerby A", "Passerby B")),
+        ):
+            roles = validate_template(directory, min_count=2, max_count=4)
+            loader = PromptLoader(directory, roles)
+            self.assertEqual(tuple(roles.names.values()), names)
+            for role in roles.role_ids:
+                self.assertEqual(
+                    set(loader.character_status_initial(role)),
+                    set(loader.character_status_schema(role)),
+                )
 
     def test_narration_prompt_requests_plain_text_not_json(self) -> None:
         prompt = self.loader.text("prompts/narration.md")

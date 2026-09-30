@@ -1,0 +1,6 @@
+{
+  "mood": "Short current mood for Passerby B, consistent with world_state; one emoji is welcome. This does not affect the match rules.",
+  "wins": "Passerby B's current wins from world_state, formatted as current wins/5, for example 3/5.",
+  "win_streak": "Number of consecutive valid wins by Passerby B; reset to zero when this round is not a win.",
+  "loss_streak": "Number of consecutive valid losses by Passerby B; reset to zero when this round is not a loss."
+}

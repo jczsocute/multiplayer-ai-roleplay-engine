@@ -273,8 +273,8 @@ class AdminTemplateCommandTests(AdminFixture):
             # The Admin view shows the payload title, like the Web does.
             self.assertEqual(detail["data"]["name"], "Described")
             self.assertTrue(detail["data"]["introduction"])
-            self.assertEqual(detail["data"]["tags"], ["基础剧本"])
-            self.assertEqual(detail["data"]["roles"], ["林岚", "周砚"])
+            self.assertEqual(detail["data"]["tags"], ["双人", "石头剪刀布", "搞笑", "轻量"])
+            self.assertEqual(detail["data"]["roles"], ["路人甲", "路人乙"])
 
     def test_import_and_delete_keeps_games(self) -> None:
         shutil.copytree(Path("templates/default"), self.templates_dir / "lighthouse")

@@ -95,6 +95,11 @@ Web 登录后进入 Lobby：主页显示活跃房间与仅含公开剧本的“�
 创建房间的剧本选择器则包含本人全部剧本和其他用户的公开剧本。新建剧本会
 复制默认 scaffold 并生成所选角色数的文件，随后直接打开基础 Web Editor。
 
+大厅公告由项目根目录的 `announcement.md` 提供，仅登录用户可通过
+`GET /api/announcement` 读取。该运行文件不提交 Git；部署时可执行
+`cp announcement.example.md announcement.md`，再修改内容。文件不存在时返回空公告。
+当前浏览器按用户 ID 记录首次进入大厅的自动展示，顶栏按钮可随时重新查看。
+
 ```text
 POST /api/register
 POST /api/login
@@ -163,8 +168,11 @@ GET    /api/rooms/<code>/history.zip 房主下载当前 Room 存档历史 ZIP
 - `GET /api/templates/<id>` 返回详情：`id/name/owner_username/is_public/role_count/
   role_names/introduction/tags/updated_at`；私有 Template 仅 owner 可读（其他用户 403），
   公开 Template 任何已登录用户可读。列表接口只附带便宜的 `tags`，不含 `introduction`。
-- Template 新建使用 `ScenarioManager.scaffold_roles`（基础剧本 + N 个角色），不复制
-  `love_story` 之类的内容；副本一律 `is_public = false`。
+- Template 新建使用 `ScenarioManager.scaffold_roles`（石头剪刀布示例文字和通用 schema + N 个角色）；
+  新副本一律 `is_public = false`，作者可在编辑器中改写内容。
+- `templates/default/` 是新建剧本的唯一基础目录，保留通用的世界和角色视角 schema，
+  示例文字使用石头剪刀布；默认不启用状态栏。`templates/example1/` 与
+  `templates/example1_en/` 是中英文完整展示案例，不进入场景列表，也不能直接实例为 Game。
 - 基础编辑器只写 `metadata.json` 的 title/introduction/tags、`world/world.md`、
   `characters/N/character.md` / `opening.md` 与 `prompts/ai_guidelines.md`。
   新增末尾角色时创建最小 view schema，不启用 status；减少角色时删除末尾目录。

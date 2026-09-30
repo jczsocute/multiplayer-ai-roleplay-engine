@@ -37,6 +37,7 @@ from server.platform.websocket_adapter import DISCONNECTS, WebSocketConnection
 from server.platform.security import is_loopback_host, origin_allowed
 
 logger = logging.getLogger(__name__)
+ANNOUNCEMENT_PATH = Path(__file__).resolve().parents[2] / "announcement.md"
 
 
 def create_platform_app(
@@ -142,6 +143,15 @@ def create_platform_app(
         if user is None:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         return JSONResponse(asdict(user))
+
+    async def announcement(request: Request) -> JSONResponse:
+        if await resolve_user(request) is None:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            content = await asyncio.to_thread(ANNOUNCEMENT_PATH.read_text, encoding="utf-8")
+        except FileNotFoundError:
+            content = ""
+        return JSONResponse({"content": content}, headers={"Cache-Control": "no-store"})
 
     def template_rows(user_id: int, values) -> list[dict]:
         return [
@@ -625,6 +635,7 @@ def create_platform_app(
         Route("/api/login", login, methods=["POST"]),
         Route("/api/logout", logout, methods=["POST"]),
         Route("/api/me", me, methods=["GET"]),
+        Route("/api/announcement", announcement, methods=["GET"]),
         Route("/api/templates/mine", my_templates, methods=["GET"]),
         Route("/api/templates/public", public_templates, methods=["GET"]),
         Route("/api/templates/import-zip", template_zip, methods=["POST"]),

@@ -58,7 +58,9 @@ Keep the relevant document in sync with behavior changes.
 
 ## Repository content
 
-- Commit only `templates/default/` under `templates/`. `data/`, `games/`,
+- Commit only `templates/default/` and the showcase payloads `templates/example1/`
+  and `templates/example1_en/` under `templates/`. Only `default/` creates new
+  Templates; the examples are not playable catalog entries. `data/`, `games/`,
   other templates, SQLite sidecars, credentials, logs and local `.env` files
   are runtime/user data. Never delete local data merely to clean Git; untrack
   it from the index if necessary.

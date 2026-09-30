@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
@@ -70,6 +71,20 @@ class ResourceApiTests(unittest.TestCase):
 
     def client(self) -> TestClient:
         return TestClient(self.app)
+
+    def test_announcement_requires_login_and_reads_fixed_markdown_file(self) -> None:
+        path = self.root / "announcement.md"
+        content = "# 公告\n\n**欢迎**来到大厅。\n"
+        path.write_text(content, encoding="utf-8")
+        with patch("server.platform.web.ANNOUNCEMENT_PATH", path), self.client() as client:
+            self.assertEqual(client.get("/api/announcement").status_code, 401)
+            response = client.get("/api/announcement", headers=self.headers(self.alice.id))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"content": content})
+            path.unlink()
+            missing = client.get("/api/announcement", headers=self.headers(self.alice.id))
+            self.assertEqual(missing.status_code, 200)
+            self.assertEqual(missing.json(), {"content": ""})
 
     # --- games --------------------------------------------------------------
 
